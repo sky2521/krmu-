@@ -152,39 +152,37 @@ export default function CheckoutPage() {
 
     // Razorpay Online Flow
     try {
-      const tempOrderId = `TMP-${Math.floor(10000 + Math.random() * 90000)}`;
-      const launchedRealSdk = await initiateRazorpayCheckout({
+      const receiptId = `KRMU-${Date.now()}`;
+      await initiateRazorpayCheckout({
         amount: finalOrderTotal,
-        orderId: tempOrderId,
+        receipt: receiptId,
         customer: {
-          name: `${formData.firstName} ${formData.lastName}`,
+          name: `${formData.firstName} ${formData.lastName}`.trim(),
           email: formData.email,
           phone: formData.phone
+        },
+        notes: {
+          shipping_city: formData.city,
+          shipping_pincode: formData.pincode
         },
         onSuccess: (paymentResp) => {
           setIsSubmitting(false);
           completeOrderProcessing({
             method: "Razorpay Standard Checkout",
             paymentId: paymentResp.paymentId,
+            orderId: paymentResp.orderId,
             status: "Authorized"
           });
         },
         onFailure: (err) => {
           setIsSubmitting(false);
-          // If standard modal had an error or user closed, open our interactive sandbox modal
-          console.warn("Falling back to Razorpay interactive sandbox:", err);
-          setRazorpaySandboxOpen(true);
+          console.warn("Razorpay checkout error:", err);
+          setErrorMessage(err.message || 'Payment could not be completed. Please try again.');
         }
       });
-
-      if (!launchedRealSdk) {
-        // Fallback directly to high-fidelity test sandbox
-        setIsSubmitting(false);
-        setRazorpaySandboxOpen(true);
-      }
     } catch (err) {
       setIsSubmitting(false);
-      setRazorpaySandboxOpen(true);
+      setErrorMessage(err.message || 'An unexpected error occurred during checkout.');
     }
   };
 
