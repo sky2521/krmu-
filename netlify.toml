@@ -1,0 +1,19 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  RAZORPAY_KEY_ID = "rzp_test_TyUHs3V5mxoR4o"
+  RAZORPAY_KEY_SECRET = "6OLsRKPRNu2OopLduIylC9Hr"
+  VITE_RAZORPAY_KEY_ID = "rzp_test_TyUHs3V5mxoR4o"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
