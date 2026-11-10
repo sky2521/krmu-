@@ -22,8 +22,8 @@ export const handler = async (event) => {
     };
   }
 
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_test_TyUHs3V5mxoR4o';
+  const keySecret = process.env.RAZORPAY_KEY_SECRET || '6OLsRKPRNu2OopLduIylC9Hr';
 
   if (!keyId || !keySecret) {
     return {

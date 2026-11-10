@@ -22,7 +22,14 @@ export const handler = async (event) => {
     };
   }
 
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET || '6OLsRKPRNu2OopLduIylC9Hr';
+
+  if (!keySecret) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ success: false, error: 'Server configuration error: Key Secret missing.' })
+    };
+  }
 
   try {
     const body = JSON.parse(event.body || '{}');
