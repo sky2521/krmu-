@@ -61,6 +61,14 @@ export default function HomePage() {
 
           <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
+              to="/order"
+              className="w-full sm:w-auto px-8 py-4 luxury-shimmer text-[#121214] hover:brightness-105 transition-all duration-300 text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 group shadow-2xl"
+            >
+              <span>Order Now</span>
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </Link>
+
+            <Link
               to="/shop?category=new-arrivals"
               className="w-full sm:w-auto px-8 py-4 bg-[#FAF8F5] text-[#121214] hover:bg-[#C5A059] hover:text-white transition-all duration-300 text-xs uppercase tracking-[0.25em] font-semibold flex items-center justify-center gap-2 group shadow-xl"
             >

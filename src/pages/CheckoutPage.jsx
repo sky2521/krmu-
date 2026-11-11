@@ -26,14 +26,14 @@ export default function CheckoutPage() {
 
   // Shipping Form State
   const [formData, setFormData] = useState({
-    firstName: user?.name ? user.name.split(' ')[0] : 'Kabir',
-    lastName: user?.name && user.name.split(' ').length > 1 ? user.name.split(' ')[1] : 'Mehra',
-    email: user?.email || 'kabir@example.com',
-    phone: user?.phone || '+91 98765 43210',
-    street: user?.addresses?.[0]?.street || 'Villa 14, The Magnolias, Golf Course Road',
-    city: user?.addresses?.[0]?.city || 'Gurugram',
-    state: user?.addresses?.[0]?.state || 'Haryana',
-    pincode: user?.addresses?.[0]?.pincode || '122002',
+    firstName: user?.name ? user.name.split(' ')[0] : '',
+    lastName: user?.name && user.name.split(' ').length > 1 ? user.name.split(' ').slice(1).join(' ') : '',
+    email: user?.email || '',
+    phone: user?.phone || '',
+    street: user?.addresses?.[0]?.street || '',
+    city: user?.addresses?.[0]?.city || '',
+    state: user?.addresses?.[0]?.state || 'Delhi',
+    pincode: user?.addresses?.[0]?.pincode || '',
     deliveryNotes: ''
   });
 
@@ -106,6 +106,15 @@ export default function CheckoutPage() {
       },
       paymentMethod: paymentDetails.method || "Razorpay Gateway",
       paymentId: paymentDetails.paymentId || `pay_${Date.now()}`,
+      razorpayOrderId: paymentDetails.orderId || null,
+      razorpaySignature: paymentDetails.signature || null,
+      signatureVerified: Boolean(paymentDetails.signatureVerified),
+      verificationSource: paymentDetails.verificationSource || (paymentMethod === 'cod' ? 'cod_pending' : 'client'),
+      paymentChannel: paymentMethod === 'cod' ? 'cod' : 'razorpay',
+      rawMethod: paymentDetails.rawMethod || (paymentMethod === 'cod' ? 'cod' : 'razorpay'),
+      paymentMethodDetail: paymentDetails.methodDetail || {},
+      feePaise: paymentDetails.feePaise || 0,
+      taxPaise: paymentDetails.taxPaise || 0,
       paymentStatus: paymentDetails.status === "Authorized" || paymentDetails.status === "captured" ? "Paid" : "Pending",
       deliveryMethod: shippingMethod === 'whiteglove' ? "Atelier White Glove Courier" : "Standard Express Courier"
     };
@@ -167,12 +176,7 @@ export default function CheckoutPage() {
         },
         onSuccess: (paymentResp) => {
           setIsSubmitting(false);
-          completeOrderProcessing({
-            method: "Razorpay Standard Checkout",
-            paymentId: paymentResp.paymentId,
-            orderId: paymentResp.orderId,
-            status: "Authorized"
-          });
+          completeOrderProcessing(paymentResp);
         },
         onFailure: (err) => {
           setIsSubmitting(false);

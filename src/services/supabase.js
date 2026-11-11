@@ -347,6 +347,13 @@ function mapOrderRow(row) {
     paymentMethod: row.payment_method,
     paymentId: row.payment_id,
     paymentStatus: row.payment_status,
+    razorpayOrderId: row.razorpay_order_id || null,
+    razorpaySignature: row.razorpay_signature || null,
+    signatureVerified: Boolean(row.signature_verified),
+    paymentChannel: row.payment_channel || 'razorpay',
+    paymentMethodDetail: row.payment_method_detail || {},
+    giftWrap: Boolean(row.gift_wrap),
+    giftNote: row.gift_note || '',
     deliveryMethod: row.delivery_method,
     status: row.status,
     trackingNumber: row.tracking_number,
@@ -365,6 +372,65 @@ function mapOrderRow(row) {
   };
 }
 
+export async function logSupabasePaymentTransaction(txData, userId = null) {
+  try {
+    const amountInr = Number(txData.amountInr ?? 0);
+    const amountPaise = Number(txData.amountPaise ?? Math.round(amountInr * 100));
+
+    const payload = {
+      order_id: txData.orderId || null,
+      user_id: userId || null,
+      customer_name: txData.customerName || null,
+      customer_email: (txData.customerEmail || 'guest@krmu.com').trim().toLowerCase(),
+      customer_phone: txData.customerPhone || null,
+      razorpay_order_id: txData.razorpayOrderId || null,
+      razorpay_payment_id: txData.razorpayPaymentId || null,
+      razorpay_signature: txData.razorpaySignature || null,
+      signature_verified: Boolean(txData.signatureVerified),
+      verification_source: txData.verificationSource || 'client',
+      gateway: txData.gateway || 'razorpay',
+      method: txData.method || 'razorpay',
+      method_detail: txData.methodDetail || {},
+      amount_paise: Number.isFinite(amountPaise) ? Math.max(0, amountPaise) : 0,
+      amount_inr: Number.isFinite(amountInr) ? Math.max(0, amountInr) : 0,
+      currency: txData.currency || 'INR',
+      fee_paise: Number(txData.feePaise || 0),
+      tax_paise: Number(txData.taxPaise || 0),
+      status: txData.status || 'created',
+      error_code: txData.errorCode || null,
+      error_description: txData.errorDescription || null,
+      metadata: txData.metadata || {},
+    };
+
+    const { error } = await supabase.from('payment_transactions').insert(payload);
+    if (error) throw error;
+    return { success: true, error: null };
+  } catch (err) {
+    console.warn('logSupabasePaymentTransaction warning:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function fetchSupabasePaymentTransactions(userId = null) {
+  try {
+    let query = supabase
+      .from('payment_transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data: data || [], error: null };
+  } catch (err) {
+    return { data: [], error: err.message };
+  }
+}
+
 export async function createSupabaseOrder(orderData, userId = null) {
   try {
     const orderPayload = {
@@ -378,6 +444,13 @@ export async function createSupabaseOrder(orderData, userId = null) {
       payment_method: orderData.paymentMethod,
       payment_id: orderData.paymentId,
       payment_status: orderData.paymentStatus,
+      razorpay_order_id: orderData.razorpayOrderId || null,
+      razorpay_signature: orderData.razorpaySignature || null,
+      signature_verified: Boolean(orderData.signatureVerified),
+      payment_channel: orderData.paymentChannel || (orderData.paymentMethod?.toLowerCase().includes('cash') ? 'cod' : 'razorpay'),
+      payment_method_detail: orderData.paymentMethodDetail || {},
+      gift_wrap: Boolean(orderData.giftWrap),
+      gift_note: orderData.giftNote || null,
       delivery_method: orderData.deliveryMethod,
       status: orderData.status,
       tracking_number: orderData.trackingNumber,
@@ -405,6 +478,42 @@ export async function createSupabaseOrder(orderData, userId = null) {
       const { error: itemsErr } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsErr) throw itemsErr;
     }
+
+    const totalInr = Number(orderData.pricing?.total ?? 0);
+    await logSupabasePaymentTransaction(
+      {
+        orderId: orderData.id,
+        customerName: orderData.customer.name,
+        customerEmail: orderData.customer.email,
+        customerPhone: orderData.customer.phone,
+        razorpayOrderId: orderData.razorpayOrderId || null,
+        razorpayPaymentId: orderData.paymentId,
+        razorpaySignature: orderData.razorpaySignature || null,
+        signatureVerified: Boolean(orderData.signatureVerified),
+        verificationSource:
+          orderData.verificationSource ||
+          (orderData.paymentStatus === 'Paid' ? 'hmac_sha256_server' : 'cod_pending'),
+        gateway: orderData.paymentChannel === 'cod' ? 'cash_on_delivery' : 'razorpay',
+        method: orderData.rawMethod || (orderData.paymentChannel === 'cod' ? 'cod' : 'razorpay'),
+        methodDetail: orderData.paymentMethodDetail || {},
+        amountInr: totalInr,
+        amountPaise: Math.round(totalInr * 100),
+        feePaise: orderData.feePaise || 0,
+        taxPaise: orderData.taxPaise || 0,
+        status:
+          orderData.signatureVerified
+            ? 'verified'
+            : orderData.paymentStatus === 'Paid'
+            ? 'captured'
+            : 'cod_pending',
+        metadata: {
+          promo_code: orderData.pricing?.promoCodeApplied || null,
+          delivery_method: orderData.deliveryMethod,
+          gift_wrap: Boolean(orderData.giftWrap),
+        },
+      },
+      userId
+    );
 
     return { success: true, orderId: orderData.id, error: null };
   } catch (err) {

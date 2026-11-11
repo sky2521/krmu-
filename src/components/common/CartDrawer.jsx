@@ -39,7 +39,7 @@ export default function CartDrawer() {
 
   const handleCheckoutClick = () => {
     setIsCartDrawerOpen(false);
-    navigate('/checkout');
+    navigate('/order?mode=bag');
   };
 
   return (
@@ -258,12 +258,12 @@ export default function CartDrawer() {
                 </p>
               </div>
 
-              {/* Checkout CTA */}
+              {/* Order Now CTA */}
               <button
                 onClick={handleCheckoutClick}
                 className="w-full py-3.5 bg-[#121214] text-white hover:bg-[#C5A059] transition-all duration-300 text-xs uppercase tracking-[0.2em] font-semibold flex items-center justify-center gap-2 group shadow-md"
               >
-                <span>Proceed to Checkout</span>
+                <span>Order Now</span>
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </button>
 

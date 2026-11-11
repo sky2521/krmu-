@@ -66,10 +66,10 @@ GRANT SELECT ON public.products TO anon;`;
 
 export default function AdminDashboard() {
   const { products, addProduct, updateProduct, deleteProduct, resetToDefaults, importProductsFromCsv } = useProducts();
-  const { orders, updateOrderStatus } = useOrders();
+  const { orders, paymentTransactions, updateOrderStatus, refreshOrdersAndLedger } = useOrders();
   const { user, isAdmin, openLogin, refreshProfile } = useAuth();
 
-  const [activeAdminTab, setActiveAdminTab] = useState('orders'); // orders, products, crm, settings, backend
+  const [activeAdminTab, setActiveAdminTab] = useState('orders'); // orders, ledger, products, crm, settings, backend
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedPromoteSql, setCopiedPromoteSql] = useState(false);
   const [checkingRole, setCheckingRole] = useState(false);
@@ -370,6 +370,18 @@ export default function AdminDashboard() {
         </button>
 
         <button
+          onClick={() => setActiveAdminTab('ledger')}
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-1.5 ${
+            activeAdminTab === 'ledger'
+              ? 'border-[#121214] text-[#121214]'
+              : 'border-transparent text-[#7F7972] hover:text-black'
+          }`}
+        >
+          <CreditCard className="w-3.5 h-3.5 text-[#C5A059]" />
+          <span>Payment Ledger ({paymentTransactions.length})</span>
+        </button>
+
+        <button
           onClick={() => setActiveAdminTab('products')}
           className={`pb-3 border-b-2 transition-colors ${
             activeAdminTab === 'products'
@@ -500,6 +512,104 @@ export default function AdminDashboard() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 1B: RAZORPAY PAYMENT AUDIT LEDGER */}
+      {activeAdminTab === 'ledger' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h3 className="font-serif text-xl text-[#121214]">
+                Razorpay & Supabase Payment Ledger (`public.payment_transactions`)
+              </h3>
+              <p className="text-xs text-[#7F7972]">
+                Real-time cryptographic audit log of authorized, verified, COD, failed, and cancelled transactions.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={refreshOrdersAndLedger}
+              className="px-3.5 py-2 border border-[#D5C7B8] text-xs uppercase tracking-wider font-semibold hover:border-black rounded-sm flex items-center gap-1.5 self-start"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Sync Ledger
+            </button>
+          </div>
+
+          <div className="bg-white border border-[#E6DED5] rounded-sm overflow-x-auto shadow-sm">
+            <table className="w-full text-xs text-left">
+              <thead className="bg-[#FAF8F5] text-[#121214] uppercase tracking-wider border-b border-[#E6DED5]">
+                <tr>
+                  <th className="p-3.5 font-semibold">Timestamp & Client</th>
+                  <th className="p-3.5 font-semibold">Linked Order</th>
+                  <th className="p-3.5 font-semibold">Gateway & Instrument</th>
+                  <th className="p-3.5 font-semibold">Amount (INR)</th>
+                  <th className="p-3.5 font-semibold">Razorpay IDs</th>
+                  <th className="p-3.5 font-semibold">HMAC Security</th>
+                  <th className="p-3.5 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F0ECE5] text-[#5C5750]">
+                {paymentTransactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-[#7F7972]">
+                      No payment ledger entries recorded yet in Supabase. Complete a Razorpay or COD checkout on /order to see live records.
+                    </td>
+                  </tr>
+                ) : (
+                  paymentTransactions.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-[#FAF8F5]/80 transition-colors">
+                      <td className="p-3.5">
+                        <p className="font-semibold text-[#121214]">{tx.customer_name || 'Guest Client'}</p>
+                        <p className="text-[11px] text-[#7F7972]">{tx.customer_email}</p>
+                        <p className="text-[10px] text-[#8C867E]">
+                          {tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}
+                        </p>
+                      </td>
+                      <td className="p-3.5 font-mono font-semibold text-[#121214]">
+                        {tx.order_id || <span className="text-[#8C867E]">Attempt Only</span>}
+                      </td>
+                      <td className="p-3.5 uppercase font-mono text-[11px]">
+                        <span className="font-bold text-[#121214]">{tx.gateway}</span>
+                        <span className="block text-[10px] text-[#7F7972]">{tx.method}</span>
+                      </td>
+                      <td className="p-3.5 font-serif text-sm font-bold text-[#121214]">
+                        ₹{Number(tx.amount_inr || 0).toLocaleString('en-IN')}
+                      </td>
+                      <td className="p-3.5 font-mono text-[10px] space-y-0.5 max-w-[180px] truncate">
+                        {tx.razorpay_order_id && <p>ord: {tx.razorpay_order_id}</p>}
+                        {tx.razorpay_payment_id && <p>pay: {tx.razorpay_payment_id}</p>}
+                      </td>
+                      <td className="p-3.5">
+                        {tx.signature_verified ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold rounded">
+                            <ShieldCheck className="w-3 h-3" /> HMAC Verified
+                          </span>
+                        ) : (
+                          <span className="inline-block px-2 py-0.5 bg-neutral-100 text-neutral-700 text-[10px] rounded">
+                            {tx.verification_source || 'Unverified'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3.5">
+                        <span
+                          className={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase rounded ${
+                            tx.status === 'verified' || tx.status === 'captured'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : tx.status === 'failed' || tx.status === 'cancelled'
+                              ? 'bg-red-50 text-red-700'
+                              : 'bg-amber-50 text-amber-800'
+                          }`}
+                        >
+                          {tx.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

@@ -24,6 +24,23 @@ export const PROMO_CODES = {
   LUXURY500: { type: 'flat', value: 500, label: '₹500 Atelier Credit' }
 };
 
+export function calculatePromoDiscount(code, subtotalAmount) {
+  const clean = (code || '').trim().toUpperCase();
+  const promo = PROMO_CODES[clean];
+  if (!promo || subtotalAmount <= 0) return 0;
+
+  if (promo.type === 'royal') {
+    return subtotalAmount >= promo.minSubtotal ? promo.discount : 0;
+  }
+  if (promo.type === 'percent') {
+    return Math.round((subtotalAmount * promo.value) / 100);
+  }
+  if (promo.type === 'flat') {
+    return Math.min(subtotalAmount, promo.value);
+  }
+  return 0;
+}
+
 export const CartProvider = ({ children }) => {
   const { user } = useAuth();
 
@@ -211,24 +228,7 @@ export const CartProvider = ({ children }) => {
     setPromoError('');
   };
 
-  let discountAmount = 0;
-  if (promoCode && PROMO_CODES[promoCode]) {
-    const p = PROMO_CODES[promoCode];
-    if (p.type === 'royal') {
-      if (subtotal >= 45000 && subtotal <= 50000) {
-        // Between 45,000 and 50,000: if 50,000, pays 41,000 (9,000 discount)
-        discountAmount = 9000;
-      } else if (subtotal > 50000) {
-        discountAmount = 9000;
-      } else {
-        discountAmount = 0;
-      }
-    } else if (p.type === 'percent') {
-      discountAmount = Math.round((subtotal * p.value) / 100);
-    } else if (p.type === 'flat') {
-      discountAmount = Math.min(subtotal, p.value);
-    }
-  }
+  const discountAmount = calculatePromoDiscount(promoCode, subtotal);
 
   const FREE_SHIPPING_THRESHOLD = 2499;
   const shippingFee = subtotal === 0 ? 0 : subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : 199;

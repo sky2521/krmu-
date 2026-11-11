@@ -1,12 +1,41 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
+
+function buildSafePaymentSummary(rzpPayment) {
+  if (!rzpPayment) return null;
+  const methodDetail = {};
+  if (rzpPayment.vpa) methodDetail.vpa = rzpPayment.vpa;
+  if (rzpPayment.bank) methodDetail.bank = rzpPayment.bank;
+  if (rzpPayment.wallet) methodDetail.wallet = rzpPayment.wallet;
+  if (rzpPayment.card) {
+    methodDetail.card_network = rzpPayment.card.network || null;
+    methodDetail.card_last4 = rzpPayment.card.last4 || null;
+    methodDetail.card_type = rzpPayment.card.type || null;
+    methodDetail.issuer = rzpPayment.card.issuer || null;
+  }
+
+  return {
+    method: rzpPayment.method || 'razorpay',
+    status: rzpPayment.status || 'authorized',
+    amount_paise: Number(rzpPayment.amount || 0),
+    currency: rzpPayment.currency || 'INR',
+    fee_paise: Number(rzpPayment.fee || 0),
+    tax_paise: Number(rzpPayment.tax || 0),
+    email: rzpPayment.email || null,
+    contact: rzpPayment.contact || null,
+    method_detail: methodDetail,
+    acquirer_data: rzpPayment.acquirer_data || {}
+  };
+}
 
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     return res.status(200).end();
   }
 
@@ -14,10 +43,15 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
   }
 
-  const keySecret = process.env.RAZORPAY_KEY_SECRET || '6OLsRKPRNu2OopLduIylC9Hr';
+  const keyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
   if (!keySecret) {
-    return res.status(500).json({ error: 'Server configuration error: RAZORPAY_KEY_SECRET missing.' });
+    return res.status(503).json({
+      success: false,
+      verified: false,
+      error: 'Server configuration error: RAZORPAY_KEY_SECRET is not configured.'
+    });
   }
 
   try {
@@ -26,7 +60,7 @@ export default async function handler(req, res) {
       try {
         body = JSON.parse(body);
       } catch (e) {
-        // keep as is
+        body = {};
       }
     }
     body = body || {};
@@ -35,22 +69,20 @@ export default async function handler(req, res) {
     const razorpayPaymentId = body.razorpay_payment_id || body.payment_id;
     const razorpaySignature = body.razorpay_signature || body.signature;
 
-    // Validate required fields
     if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
       return res.status(400).json({
         success: false,
+        verified: false,
         error: 'Missing required parameters: razorpay_order_id, razorpay_payment_id, and razorpay_signature are required.'
       });
     }
 
-    // Algorithm: HMAC-SHA256(order_id + "|" + payment_id, KEY_SECRET)
     const payload = `${razorpayOrderId}|${razorpayPaymentId}`;
     const expectedSignature = crypto
       .createHmac('sha256', keySecret)
       .update(payload)
       .digest('hex');
 
-    // Safe comparison: check lengths before timingSafeEqual to avoid RangeError
     let isSignatureValid = false;
     if (expectedSignature.length === razorpaySignature.length) {
       isSignatureValid = crypto.timingSafeEqual(
@@ -59,25 +91,40 @@ export default async function handler(req, res) {
       );
     }
 
-    if (isSignatureValid) {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      return res.status(200).json({
-        success: true,
-        message: 'Payment signature verified successfully',
-        order_id: razorpayOrderId,
-        payment_id: razorpayPaymentId
-      });
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+    if (!isSignatureValid) {
       return res.status(400).json({
         success: false,
-        error: 'Payment verification failed: Signature mismatch. Payment has not been marked as paid.'
+        verified: false,
+        error: 'Payment verification failed: Cryptographic signature mismatch.'
       });
     }
+
+    let paymentSummary = null;
+    if (keyId && razorpayPaymentId) {
+      try {
+        const razorpay = new Razorpay({ key_id: keyId, key_secret: keySecret });
+        const rzpPayment = await razorpay.payments.fetch(razorpayPaymentId);
+        paymentSummary = buildSafePaymentSummary(rzpPayment);
+      } catch (fetchErr) {
+        console.warn('Non-blocking Razorpay payment fetch warning:', fetchErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      verified: true,
+      verification_source: 'hmac_sha256_server',
+      verified_at: new Date().toISOString(),
+      message: 'Payment signature cryptographically verified via HMAC-SHA256',
+      order_id: razorpayOrderId,
+      payment_id: razorpayPaymentId,
+      payment: paymentSummary
+    });
   } catch (error) {
     console.error('Payment Signature Verification Error:', error);
     return res.status(500).json({
       success: false,
+      verified: false,
       error: 'Internal server error during signature verification'
     });
   }

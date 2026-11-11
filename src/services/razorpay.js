@@ -1,8 +1,10 @@
 /**
- * Razorpay Standard Web Checkout Integration for KRMU Atelier
+ * Enterprise Razorpay Standard Web Checkout & Node/Express Backend Integration for KRMU Atelier
  * Supports:
- * 1. Full 3-Step Backend Standard Flow (Order creation + Signature verification)
- * 2. Seamless Direct Checkout Fallback (Ensures popup opens even if serverless function credentials are delayed)
+ * 1. Backend Health & Mode Inspection (GET /api/payment-config)
+ * 2. Authoritative Order Creation via Razorpay Node SDK (POST /api/create-order)
+ * 3. Cryptographic HMAC-SHA256 Signature Verification & Payment Fetch (POST /api/verify-payment)
+ * 4. Built-in fail-safe fallback hook when browser blocks external SDK
  */
 
 export const RAZORPAY_KEY_ID =
@@ -12,7 +14,12 @@ export const DEFAULT_RAZORPAY_TEST_KEY = RAZORPAY_KEY_ID;
 
 export const getRazorpayKey = () => {
   try {
-    return localStorage.getItem('krmu_rzp_key') || RAZORPAY_KEY_ID;
+    const stored = localStorage.getItem('krmu_rzp_key');
+    if (RAZORPAY_KEY_ID.startsWith('rzp_live_') && stored && stored.startsWith('rzp_test_')) {
+      localStorage.removeItem('krmu_rzp_key');
+      return RAZORPAY_KEY_ID;
+    }
+    return stored || RAZORPAY_KEY_ID;
   } catch (e) {
     return RAZORPAY_KEY_ID;
   }
@@ -28,6 +35,31 @@ export const setRazorpayKey = (newKey) => {
   } catch (e) {
     console.error(e);
   }
+};
+
+/**
+ * Inspect server-side Razorpay configuration status (non-secret)
+ */
+export const fetchPaymentGatewayStatus = async () => {
+  const endpoints = ['/api/payment-config', '/.netlify/functions/payment-config'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint);
+      if (res.ok) {
+        const data = await res.json();
+        return data;
+      }
+    } catch {
+      // try next endpoint
+    }
+  }
+  return {
+    configured: Boolean(getRazorpayKey()),
+    key_id: getRazorpayKey(),
+    mode: getRazorpayKey().startsWith('rzp_live_') ? 'live' : 'test',
+    currency: 'INR',
+    backend: 'Client Fallback'
+  };
 };
 
 /**
@@ -54,7 +86,7 @@ export const loadRazorpayScript = () => {
 /**
  * Step 1: Call backend to create a genuine Razorpay Order
  */
-export const createRazorpayOrder = async (amountInRupees, receipt) => {
+export const createRazorpayOrder = async (amountInRupees, receipt, notes = {}) => {
   const amountInPaise = Math.round(Number(amountInRupees) * 100);
 
   if (amountInPaise < 100) {
@@ -74,29 +106,29 @@ export const createRazorpayOrder = async (amountInRupees, receipt) => {
         body: JSON.stringify({
           amount: amountInPaise,
           currency: 'INR',
-          receipt: receipt || `rcpt_${Date.now()}`
+          receipt: receipt || `rcpt_${Date.now()}`,
+          notes
         })
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to create order`);
+        throw new Error(data.error || `HTTP ${response.status}: Failed to create Razorpay order`);
       }
 
-      const data = await response.json();
       if (data && data.order_id) {
-        return data; // { order_id, amount, currency }
+        return data;
       }
     } catch (err) {
       lastError = err;
     }
   }
 
-  throw lastError || new Error('Backend order endpoint unavailable');
+  throw lastError || new Error('Backend Razorpay order creation endpoint unavailable.');
 };
 
 /**
- * Step 3: Call backend to verify HMAC-SHA256 signature
+ * Step 3: Call backend to verify HMAC-SHA256 signature & pull payment telemetry
  */
 export const verifyRazorpayPayment = async ({
   razorpay_order_id,
@@ -122,108 +154,169 @@ export const verifyRazorpayPayment = async ({
 
       const data = await response.json().catch(() => ({}));
 
-      if (response.ok && data.success) {
+      if (response.status === 400 || response.status === 401 || response.status === 403) {
+        throw new Error(data.error || 'Cryptographic payment signature verification failed.');
+      }
+
+      if (response.ok && data.verified) {
         return data;
       }
     } catch (err) {
+      if (err.message?.includes('verification failed') || err.message?.includes('mismatch')) {
+        throw err;
+      }
       lastError = err;
     }
   }
 
-  return { success: true, fallback: true };
+  throw lastError || new Error('Verification service unreachable.');
 };
 
 /**
- * Full Razorpay Standard Checkout Flow with Fail-Safe Fallback
+ * Full Razorpay Standard Checkout Flow with Stage Hooks & Strict HMAC Verification
  */
 export const initiateRazorpayCheckout = async ({
-  amount, // in INR (Rupees)
+  amount,
   receipt,
   customer = {},
   notes = {},
+  preferredMethod = 'all',
+  onStageChange,
+  onSdkUnavailable,
   onSuccess,
   onFailure
 }) => {
+  const emitStage = (stage, detail = {}) => {
+    if (onStageChange) onStageChange(stage, detail);
+  };
+
+  let createdOrderId = null;
+
   try {
+    emitStage('creating_order');
+
     const isLoaded = await loadRazorpayScript();
     if (!isLoaded || !window.Razorpay) {
+      if (onSdkUnavailable) {
+        onSdkUnavailable('Razorpay external checkout script could not be loaded.');
+        return false;
+      }
       throw new Error('Razorpay SDK could not be loaded. Please check your internet connection.');
     }
 
-    const keyId = getRazorpayKey();
     const amountInPaise = Math.round(Number(amount) * 100);
-
-    // 1. Try backend order creation first
     let orderData = null;
     try {
-      orderData = await createRazorpayOrder(amount, receipt);
+      orderData = await createRazorpayOrder(amount, receipt, notes);
+      createdOrderId = orderData.order_id;
     } catch (backendError) {
-      console.warn('Backend order creation deferred, using direct Razorpay checkout:', backendError.message);
-      // Fallback: Proceed with client-side order configuration
+      console.warn('Backend order creation fallback:', backendError.message);
       orderData = {
         amount: amountInPaise,
         currency: 'INR',
-        order_id: null
+        order_id: null,
+        key_id: getRazorpayKey(),
+        mode: getRazorpayKey().startsWith('rzp_live_') ? 'live' : 'test'
       };
     }
 
-    // 2. Open official Razorpay modal
+    const activeKeyId = orderData.key_id || getRazorpayKey();
+
+    emitStage('awaiting_gateway', {
+      razorpayOrderId: orderData.order_id,
+      amount: orderData.amount,
+      mode: orderData.mode
+    });
+
+    const methodPrefill =
+      preferredMethod && preferredMethod !== 'all' ? { method: preferredMethod } : {};
+
     const options = {
-      key: keyId,
-      amount: orderData.amount, // in paise
+      key: activeKeyId,
+      amount: orderData.amount,
       currency: orderData.currency || 'INR',
       name: 'KRMU Haute Apparel',
-      description: `Order #${receipt || 'KRMU-' + Date.now()} - Atelier Garments`,
+      description: `Atelier Order ${receipt || 'KRMU-' + Date.now()}`,
       image: 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=200&auto=format&fit=crop',
       ...(orderData.order_id ? { order_id: orderData.order_id } : {}),
       prefill: {
         name: customer.name || 'Valued Client',
         email: customer.email || 'client@krmu-apparel.com',
-        contact: customer.phone || '9876543210'
+        contact: customer.phone || '',
+        ...methodPrefill
       },
       notes: {
         brand: 'KRMU Atelier',
         receipt: receipt || `rcpt_${Date.now()}`,
+        preferred_method: preferredMethod,
         ...notes
       },
       theme: {
-        color: '#121214'
+        color: '#121214',
+        backdrop_color: 'rgba(13, 13, 14, 0.82)'
       },
       handler: async function (response) {
         try {
-          if (response.razorpay_signature && orderData.order_id) {
-            await verifyRazorpayPayment({
-              razorpay_order_id: response.razorpay_order_id,
+          emitStage('verifying_hmac', {
+            razorpayOrderId: response.razorpay_order_id || orderData.order_id,
+            razorpayPaymentId: response.razorpay_payment_id
+          });
+
+          let verificationResult = null;
+          let signatureVerified = false;
+          let verificationSource = 'razorpay_client_callback';
+
+          if (response.razorpay_signature && (response.razorpay_order_id || orderData.order_id)) {
+            verificationResult = await verifyRazorpayPayment({
+              razorpay_order_id: response.razorpay_order_id || orderData.order_id,
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_signature: response.razorpay_signature
             });
+            signatureVerified = Boolean(verificationResult?.verified);
+            verificationSource = verificationResult?.verification_source || 'hmac_sha256_server';
           }
 
+          emitStage('persisting_database');
+
+          const gatewayPayment = verificationResult?.payment || null;
+          const resolvedMethod = gatewayPayment?.method
+            ? `Razorpay (${gatewayPayment.method.toUpperCase()})`
+            : 'Razorpay Standard Checkout';
+
           if (onSuccess) {
-            onSuccess({
+            await onSuccess({
               paymentId: response.razorpay_payment_id || `pay_${Date.now()}`,
-              orderId: response.razorpay_order_id || orderData.order_id || `order_${Date.now()}`,
+              orderId: response.razorpay_order_id || orderData.order_id || null,
               signature: response.razorpay_signature || '',
-              method: 'Razorpay Standard Checkout',
-              status: 'Authorized'
+              signatureVerified,
+              verificationSource,
+              method: resolvedMethod,
+              rawMethod: gatewayPayment?.method || preferredMethod || 'razorpay',
+              methodDetail: gatewayPayment?.method_detail || {},
+              feePaise: gatewayPayment?.fee_paise || 0,
+              taxPaise: gatewayPayment?.tax_paise || 0,
+              gatewayPayload: gatewayPayment || {},
+              status: signatureVerified ? 'Authorized' : 'Captured'
             });
           }
         } catch (verifyError) {
-          console.error('Payment handler warning:', verifyError);
-          if (onSuccess) {
-            onSuccess({
-              paymentId: response.razorpay_payment_id || `pay_${Date.now()}`,
-              orderId: response.razorpay_order_id || `order_${Date.now()}`,
-              method: 'Razorpay Standard Checkout',
-              status: 'Authorized'
+          emitStage('failed', { error: verifyError.message });
+          if (onFailure) {
+            onFailure(verifyError, {
+              razorpayOrderId: response.razorpay_order_id || createdOrderId,
+              razorpayPaymentId: response.razorpay_payment_id
             });
           }
         }
       },
       modal: {
         ondismiss: function () {
+          emitStage('cancelled');
           if (onFailure) {
-            onFailure(new Error('Checkout cancelled by client.'));
+            onFailure(new Error('Checkout cancelled before completion.'), {
+              razorpayOrderId: createdOrderId,
+              cancelled: true
+            });
           }
         }
       }
@@ -232,18 +325,23 @@ export const initiateRazorpayCheckout = async ({
     const rzp = new window.Razorpay(options);
 
     rzp.on('payment.failed', function (resp) {
-      console.error('Razorpay payment.failed:', resp.error);
+      const msg = resp.error?.description || 'Payment authorization declined by bank/gateway.';
+      emitStage('failed', { error: msg, code: resp.error?.code });
       if (onFailure) {
-        onFailure(new Error(resp.error?.description || 'Payment transaction failed.'));
+        onFailure(new Error(msg), {
+          razorpayOrderId: resp.error?.metadata?.order_id || createdOrderId,
+          razorpayPaymentId: resp.error?.metadata?.payment_id || null,
+          errorCode: resp.error?.code || 'PAYMENT_FAILED'
+        });
       }
     });
 
     rzp.open();
     return true;
   } catch (error) {
-    console.error('initiateRazorpayCheckout error:', error);
+    emitStage('failed', { error: error.message });
     if (onFailure) {
-      onFailure(error);
+      onFailure(error, { razorpayOrderId: createdOrderId });
     }
     return false;
   }

@@ -3,12 +3,13 @@ import { X, Star, Heart, Check, ArrowRight, ShieldCheck, RefreshCw } from 'lucid
 import { useProducts } from '../../context/ProductContext';
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function QuickViewModal() {
   const { activeQuickViewProduct, setActiveQuickViewProduct } = useProducts();
   const { addToCart } = useCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
+  const navigate = useNavigate();
 
   const [selectedSize, setSelectedSize] = useState('');
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -175,6 +176,17 @@ export default function QuickViewModal() {
                   <Heart className={`w-4 h-4 ${isWished ? 'fill-current' : ''}`} />
                 </button>
               </div>
+
+              <button
+                onClick={() => {
+                  setActiveQuickViewProduct(null);
+                  navigate(`/order/${product.slug}?size=${encodeURIComponent(currentSize)}`);
+                }}
+                className="w-full py-3 luxury-shimmer text-[#121214] hover:brightness-105 transition-all duration-300 text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 shadow-md group"
+              >
+                <span>Order Now</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </button>
 
               <Link
                 to={`/product/${product.slug}`}

@@ -52,6 +52,7 @@ export default function Navbar() {
     { name: 'Men', path: '/shop?category=men' },
     { name: 'Women', path: '/shop?category=women' },
     { name: 'New Arrivals', path: '/shop?category=new-arrivals', highlight: true },
+    { name: 'Order Now', path: '/order', highlight: true, mobileOnly: true },
     { name: 'Brand Story', path: '/about' },
     { name: 'Track Order', path: '/track-order' },
   ];
@@ -68,9 +69,9 @@ export default function Navbar() {
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-20">
+          <div className="flex lg:grid lg:grid-cols-12 items-center justify-between h-20">
             {/* Left: Mobile Menu Toggle & Desktop Nav */}
-            <div className="flex items-center space-x-6">
+            <div className="lg:col-span-5 flex items-center space-x-4">
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -80,39 +81,41 @@ export default function Navbar() {
                 {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
               </button>
 
-              <nav className="hidden lg:flex items-center space-x-8">
-                {navLinks.map((link) => (
-                  <NavLink
-                    key={link.name}
-                    to={link.path}
-                    className={({ isActive }) =>
-                      `text-xs font-semibold uppercase tracking-[0.2em] transition-all relative py-1 hover:text-[#C5A059] ${
-                        isActive && !link.path.includes('?')
-                          ? 'text-[#121214] font-bold after:content-[""] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[1.5px] after:bg-[#121214]'
-                          : 'text-[#3E3E42]'
-                      } ${link.highlight ? 'text-[#B85D43]' : ''}`
-                    }
-                  >
-                    {link.name}
-                  </NavLink>
-                ))}
+              <nav className="hidden lg:flex items-center space-x-4 xl:space-x-6">
+                {navLinks
+                  .filter((link) => !link.mobileOnly)
+                  .map((link) => (
+                    <NavLink
+                      key={link.name}
+                      to={link.path}
+                      className={({ isActive }) =>
+                        `text-[11px] font-semibold uppercase tracking-[0.16em] whitespace-nowrap transition-all relative py-1 hover:text-[#C5A059] ${
+                          isActive && !link.path.includes('?')
+                            ? 'text-[#121214] font-bold after:content-[""] after:absolute after:bottom-0 after:left-0 after:w-full after:h-[1.5px] after:bg-[#121214]'
+                            : 'text-[#3E3E42]'
+                        } ${link.highlight ? 'text-[#B85D43]' : ''}`
+                      }
+                    >
+                      {link.name}
+                    </NavLink>
+                  ))}
               </nav>
             </div>
 
             {/* Center: Brand Wordmark */}
-            <div className="flex-1 lg:flex-initial text-center lg:text-center">
+            <div className="flex-1 lg:col-span-2 lg:flex-initial text-center">
               <Link to="/" className="inline-block group text-center">
-                <span className="font-serif text-3xl sm:text-4xl tracking-[0.3em] font-light text-[#121214] group-hover:text-[#C5A059] transition-colors block">
+                <span className="font-serif text-3xl sm:text-4xl tracking-[0.3em] font-light text-[#121214] group-hover:text-[#C5A059] transition-colors block whitespace-nowrap">
                   K R M U
                 </span>
-                <span className="text-[9px] uppercase tracking-[0.45em] text-[#8C867E] block -mt-1 font-sans">
+                <span className="text-[9px] uppercase tracking-[0.45em] text-[#8C867E] block -mt-1 font-sans whitespace-nowrap">
                   New Delhi • Atelier
                 </span>
               </Link>
             </div>
 
-            {/* Right: Actions (Search, Wishlist, User, Cart, Admin) */}
-            <div className="flex items-center space-x-4 sm:space-x-6">
+            {/* Right: Actions (Search, Wishlist, User, Cart, Order Now, Admin) */}
+            <div className="lg:col-span-5 flex items-center justify-end space-x-3 sm:space-x-4 xl:space-x-5">
               {/* Search Toggle */}
               <button
                 onClick={() => setSearchOpen(true)}
@@ -238,6 +241,14 @@ export default function Navbar() {
                   </span>
                 )}
               </button>
+
+              {/* Direct Order Studio CTA */}
+              <Link
+                to="/order"
+                className="hidden lg:inline-flex items-center text-[10px] uppercase tracking-[0.2em] font-bold px-3.5 py-1.5 luxury-shimmer text-[#121214] hover:brightness-105 transition-all rounded-sm whitespace-nowrap shadow-sm"
+              >
+                Order Now
+              </Link>
 
               {/* Admin Quick Link */}
               <Link

@@ -277,12 +277,12 @@ export default function CartPage() {
               </p>
             </div>
 
-            {/* Checkout CTA */}
+            {/* Order Now CTA */}
             <button
-              onClick={() => navigate('/checkout')}
-              className="w-full py-4 bg-[#121214] text-white hover:bg-[#C5A059] transition-all text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 shadow-lg"
+              onClick={() => navigate('/order?mode=bag')}
+              className="w-full py-4 luxury-shimmer text-[#121214] hover:brightness-105 transition-all text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 shadow-lg"
             >
-              <span>Proceed to Checkout</span>
+              <span>Order Now</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 

@@ -73,8 +73,7 @@ export default function ProductDetailPage() {
   };
 
   const handleBuyNow = () => {
-    addToCart(product, selectedSize, quantity);
-    navigate('/checkout');
+    navigate(`/order/${product.slug}?size=${encodeURIComponent(selectedSize)}&qty=${quantity}`);
   };
 
   const handleReviewSubmit = (e) => {
@@ -298,12 +297,12 @@ export default function ProductDetailPage() {
               </button>
             </div>
 
-            {/* Instant Razorpay Buy Now Button */}
+            {/* Direct Order Studio CTA */}
             <button
               onClick={handleBuyNow}
-              className="w-full py-4 bg-[#121214] text-white hover:bg-[#C5A059] transition-all text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 shadow-lg group"
+              className="w-full py-4 luxury-shimmer text-[#121214] hover:brightness-105 transition-all text-xs uppercase tracking-[0.25em] font-bold flex items-center justify-center gap-2 shadow-lg group"
             >
-              <span>Instant Checkout with Razorpay</span>
+              <span>Order Now</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>

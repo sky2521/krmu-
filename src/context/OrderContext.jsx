@@ -1,65 +1,15 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  createSupabaseOrder, 
-  fetchSupabaseOrders, 
-  fetchSupabaseOrderById, 
-  updateSupabaseOrderStatus 
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  createSupabaseOrder,
+  fetchSupabaseOrders,
+  fetchSupabaseOrderById,
+  updateSupabaseOrderStatus,
+  logSupabasePaymentTransaction,
+  fetchSupabasePaymentTransactions
 } from '../services/supabase';
 import { useAuth } from './AuthContext';
 
 const OrderContext = createContext();
-
-const INITIAL_ORDERS = [
-  {
-    id: "KRMU-2026-98102",
-    createdAt: "2026-11-05T10:30:00.000Z",
-    status: "Dispatched",
-    estimatedDelivery: "2026-11-12",
-    trackingNumber: "DELHIVERY-KRMU-894124",
-    carrier: "Delhivery Express Air",
-    paymentMethod: "Razorpay (UPI / NetBanking)",
-    paymentId: "pay_rzp_mock_89124912",
-    paymentStatus: "Paid",
-    customer: {
-      name: "Kabir Mehra",
-      email: "kabir@example.com",
-      phone: "+91 98765 43210"
-    },
-    shippingAddress: {
-      name: "Kabir Mehra",
-      street: "Villa 14, The Magnolias, Golf Course Road, Sector 42",
-      city: "Gurugram",
-      state: "Haryana",
-      pincode: "122002",
-      phone: "+91 98765 43210"
-    },
-    items: [
-      {
-        productId: "krmu-02",
-        name: "Architectural Double-Breasted Blazer",
-        price: 9499,
-        quantity: 1,
-        size: "L",
-        color: { name: "Charcoal Slate", hex: "#2A2E33" },
-        image: "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1200&auto=format&fit=crop"
-      }
-    ],
-    pricing: {
-      subtotal: 9499,
-      discount: 950,
-      shipping: 0,
-      total: 8549
-    },
-    timeline: [
-      { status: "Order Placed", date: "2026-11-05 10:30 AM", completed: true },
-      { status: "Confirmed & Quality Inspected", date: "2026-11-05 02:15 PM", completed: true },
-      { status: "Atelier Tailoring & Hand-Finishing", date: "2026-11-06 11:00 AM", completed: true },
-      { status: "Dispatched from Gurugram Hub", date: "2026-11-08 09:40 AM", completed: true },
-      { status: "Out for Delivery", date: "Pending", completed: false },
-      { status: "Delivered", date: "Estimated Nov 12, 2026", completed: false }
-    ]
-  }
-];
 
 export const OrderProvider = ({ children }) => {
   const { user, isAdmin } = useAuth();
@@ -73,35 +23,39 @@ export const OrderProvider = ({ children }) => {
     }
   });
 
-  // Pull orders from Supabase on auth change
-  useEffect(() => {
-    let active = true;
+  const [paymentTransactions, setPaymentTransactions] = useState([]);
+
+  const loadSupabaseOrdersAndLedger = useCallback(async () => {
     localStorage.removeItem('krmu_orders');
 
-    async function loadSupabaseOrders() {
-      if (!user?.id || !user.id.includes('-')) {
-        try {
-          const guest = localStorage.getItem('krmu_guest_orders');
-          if (active) setOrders(guest ? JSON.parse(guest) : []);
-        } catch {
-          if (active) setOrders([]);
-        }
-        return;
+    if (!user?.id || !user.id.includes('-')) {
+      try {
+        const guest = localStorage.getItem('krmu_guest_orders');
+        setOrders(guest ? JSON.parse(guest) : []);
+      } catch {
+        setOrders([]);
       }
-
-      // If admin, load all orders; if customer with uuid, load their orders
-      const userIdToQuery = isAdmin ? null : user.id;
-      const cloudOrders = await fetchSupabaseOrders(userIdToQuery);
-      if (active && Array.isArray(cloudOrders)) {
-        setOrders(cloudOrders);
-      }
+      setPaymentTransactions([]);
+      return;
     }
 
-    loadSupabaseOrders();
-    return () => {
-      active = false;
-    };
+    const userIdToQuery = isAdmin ? null : user.id;
+    const [cloudOrders, txRes] = await Promise.all([
+      fetchSupabaseOrders(userIdToQuery),
+      fetchSupabasePaymentTransactions(userIdToQuery)
+    ]);
+
+    if (Array.isArray(cloudOrders)) {
+      setOrders(cloudOrders);
+    }
+    if (txRes && Array.isArray(txRes.data)) {
+      setPaymentTransactions(txRes.data);
+    }
   }, [user?.id, isAdmin]);
+
+  useEffect(() => {
+    loadSupabaseOrdersAndLedger();
+  }, [loadSupabaseOrdersAndLedger]);
 
   useEffect(() => {
     try {
@@ -116,53 +70,98 @@ export const OrderProvider = ({ children }) => {
   const createOrder = async (orderData) => {
     const newOrderId = `KRMU-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
     const now = new Date();
-    
-    // Add 4-6 business days for delivery
+
+    const isWhiteGlove = orderData.deliveryMethod?.toLowerCase().includes('white glove');
     const deliveryDate = new Date(now);
-    deliveryDate.setDate(deliveryDate.getDate() + 5);
+    deliveryDate.setDate(deliveryDate.getDate() + (isWhiteGlove ? 2 : 5));
 
     const fullOrder = {
       id: newOrderId,
       createdAt: now.toISOString(),
-      status: "Confirmed",
+      status: 'Confirmed',
       estimatedDelivery: deliveryDate.toISOString().split('T')[0],
       trackingNumber: `KRMU-EXP-${Math.floor(10000000 + Math.random() * 90000000)}`,
-      carrier: "BlueDart Express Courier",
+      carrier: isWhiteGlove ? 'KRMU Private Concierge Courier' : 'BlueDart Express Air',
       ...orderData,
       timeline: [
-        { status: "Order Placed", date: now.toLocaleString(), completed: true },
-        { status: "Confirmed & Quality Inspected", date: now.toLocaleString(), completed: true },
-        { status: "Atelier Packaging", date: "In Progress", completed: false },
-        { status: "Dispatched", date: "Expected in 24 hours", completed: false },
-        { status: "Out for Delivery", date: "Pending", completed: false },
-        { status: "Delivered", date: `Estimated ${deliveryDate.toLocaleDateString()}`, completed: false }
+        { status: 'Order Placed & Vault Authorized', date: now.toLocaleString(), completed: true },
+        { status: 'Confirmed & Quality Inspected', date: now.toLocaleString(), completed: true },
+        { status: 'Atelier Packaging', date: 'In Progress', completed: false },
+        { status: 'Dispatched', date: isWhiteGlove ? 'Same-Day Concierge Dispatch' : 'Expected in 24 hours', completed: false },
+        { status: 'Out for Delivery', date: 'Pending', completed: false },
+        { status: 'Delivered', date: `Estimated ${deliveryDate.toLocaleDateString()}`, completed: false }
       ]
     };
 
-    // Save to Supabase
     const userId = user?.id && user.id.includes('-') ? user.id : null;
-    await createSupabaseOrder(fullOrder, userId);
+    const dbRes = await createSupabaseOrder(fullOrder, userId);
 
-    setOrders((prev) => [fullOrder, ...prev]);
-    return fullOrder;
+    const persistedOrder = {
+      ...fullOrder,
+      dbPersisted: Boolean(dbRes.success),
+      dbError: dbRes.error || null
+    };
+
+    setOrders((prev) => [persistedOrder, ...prev.filter((o) => o.id !== persistedOrder.id)]);
+
+    if (userId) {
+      fetchSupabasePaymentTransactions(isAdmin ? null : userId).then((txRes) => {
+        if (txRes && Array.isArray(txRes.data)) {
+          setPaymentTransactions(txRes.data);
+        }
+      });
+    }
+
+    return persistedOrder;
+  };
+
+  const recordPaymentAttempt = async (txData) => {
+    const userId = user?.id && user.id.includes('-') ? user.id : null;
+    const res = await logSupabasePaymentTransaction(txData, userId);
+    if (userId) {
+      fetchSupabasePaymentTransactions(isAdmin ? null : userId).then((txRes) => {
+        if (txRes && Array.isArray(txRes.data)) {
+          setPaymentTransactions(txRes.data);
+        }
+      });
+    }
+    return res;
+  };
+
+  const fetchOrderByIdAsync = async (orderId) => {
+    if (!orderId) return null;
+    const clean = orderId.trim().toLowerCase();
+    const local = orders.find(
+      (o) =>
+        o.id.toLowerCase() === clean ||
+        o.trackingNumber?.toLowerCase() === clean
+    );
+    if (local) return local;
+
+    const remote = await fetchSupabaseOrderById(orderId.trim());
+    if (remote) {
+      setOrders((prev) => [remote, ...prev.filter((p) => p.id !== remote.id)]);
+    }
+    return remote;
   };
 
   const getOrderById = (orderId) => {
     if (!orderId) return null;
+    const clean = orderId.trim().toLowerCase();
     const local = orders.find(
-      (o) => o.id.toLowerCase() === orderId.trim().toLowerCase() ||
-             o.trackingNumber?.toLowerCase() === orderId.trim().toLowerCase()
+      (o) =>
+        o.id.toLowerCase() === clean ||
+        o.trackingNumber?.toLowerCase() === clean
     );
     if (local) return local;
 
-    // Trigger async fetch from Supabase if not found locally
-    fetchSupabaseOrderById(orderId).then((remote) => {
+    fetchSupabaseOrderById(orderId.trim()).then((remote) => {
       if (remote) {
         setOrders((prev) => [remote, ...prev.filter((p) => p.id !== remote.id)]);
       }
     });
 
-    return local;
+    return null;
   };
 
   const updateOrderStatus = async (orderId, newStatus) => {
@@ -184,7 +183,7 @@ export const OrderProvider = ({ children }) => {
           return {
             ...order,
             status: newStatus,
-            timeline: updatedTimeline || order.timeline,
+            timeline: updatedTimeline || order.timeline
           };
         }
         return order;
@@ -199,9 +198,12 @@ export const OrderProvider = ({ children }) => {
         if (order.id === orderId) {
           return {
             ...order,
-            status: "Cancelled",
+            status: 'Cancelled',
             cancellationReason: reason,
-            refundStatus: order.paymentStatus === "Paid" ? "Refund Initiated (3-5 business days via Razorpay)" : "N/A"
+            refundStatus:
+              order.paymentStatus === 'Paid'
+                ? 'Refund Initiated (3-5 business days via Razorpay)'
+                : 'N/A'
           };
         }
         return order;
@@ -213,10 +215,14 @@ export const OrderProvider = ({ children }) => {
     <OrderContext.Provider
       value={{
         orders,
+        paymentTransactions,
         createOrder,
+        recordPaymentAttempt,
         getOrderById,
+        fetchOrderByIdAsync,
         updateOrderStatus,
-        cancelOrder
+        cancelOrder,
+        refreshOrdersAndLedger: loadSupabaseOrdersAndLedger
       }}
     >
       {children}

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Heart, Eye, ShoppingBag, Star, Check } from 'lucide-react';
+import { Heart, Eye, ShoppingBag, Star, Check, ArrowRight } from 'lucide-react';
 import { useWishlist } from '../../context/WishlistContext';
 import { useCart } from '../../context/CartContext';
 import { useProducts } from '../../context/ProductContext';
@@ -138,6 +138,14 @@ export default function ProductCard({ product }) {
             <span>{product.rating}</span>
           </div>
         </div>
+
+        <Link
+          to={`/order/${product.slug}`}
+          className="mt-2.5 w-full py-2 bg-[#121214] text-white hover:bg-[#C5A059] hover:text-[#121214] transition-all duration-300 text-[10px] uppercase tracking-[0.22em] font-semibold flex items-center justify-center gap-1.5 rounded-sm group/cta"
+        >
+          <span>Order Now</span>
+          <ArrowRight className="w-3 h-3 group-hover/cta:translate-x-0.5 transition-transform" />
+        </Link>
       </div>
     </div>
   );

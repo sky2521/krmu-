@@ -49,3 +49,58 @@
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
+/* Flagship luxury glass & gold utilities */
+.glass-dark {
+  background: rgba(18, 18, 20, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.luxury-shimmer {
+  background-image: linear-gradient(
+    115deg,
+    #c5a059 0%,
+    #f6e7c1 35%,
+    #d4b270 55%,
+    #f6e7c1 75%,
+    #c5a059 100%
+  );
+  background-size: 220% auto;
+  animation: shimmerGold 4.2s linear infinite;
+}
+
+.luxury-text-gold {
+  background-image: linear-gradient(
+    115deg,
+    #b68d40 0%,
+    #f4e0b1 38%,
+    #c5a059 62%,
+    #f4e0b1 85%,
+    #b68d40 100%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmerGold 5s linear infinite;
+}
+
+.atelier-card-hover {
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.3s ease;
+}
+.atelier-card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 45px -15px rgba(18, 18, 20, 0.16);
+}
+
+@keyframes shimmerGold {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
