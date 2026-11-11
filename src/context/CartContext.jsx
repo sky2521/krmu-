@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { syncCartToSupabase, fetchCartFromSupabase } from '../services/supabase';
 import { useAuth } from './AuthContext';
 
@@ -46,23 +46,56 @@ export const CartProvider = ({ children }) => {
   });
   const [promoError, setPromoError] = useState('');
   const [promoSuccess, setPromoSuccess] = useState('');
+  const hydratedUserIdRef = useRef(null);
 
-  // Pull cloud cart from Supabase when logged in
+  // Pull cloud cart from Supabase when logged in (merge guest items without wiping cloud cart)
   useEffect(() => {
-    if (user?.id && user.id.includes('-')) {
-      fetchCartFromSupabase(user.id).then((cloudItems) => {
-        if (cloudItems && cloudItems.length > 0) {
-          setItems(cloudItems);
-        }
-      });
+    let active = true;
+    const uid = user?.id && user.id.includes('-') ? user.id : null;
+
+    if (!uid) {
+      hydratedUserIdRef.current = null;
+      return () => {
+        active = false;
+      };
     }
+
+    fetchCartFromSupabase(uid).then((cloudItems) => {
+      if (!active) return;
+
+      setItems((prevLocal) => {
+        const mergedMap = new Map();
+        (cloudItems || []).forEach((it) => mergedMap.set(it.key, it));
+        (prevLocal || []).forEach((it) => {
+          const existing = mergedMap.get(it.key);
+          if (existing) {
+            mergedMap.set(it.key, {
+              ...existing,
+              quantity: Math.max(existing.quantity, it.quantity),
+            });
+          } else {
+            mergedMap.set(it.key, it);
+          }
+        });
+        const merged = Array.from(mergedMap.values());
+        hydratedUserIdRef.current = uid;
+        if (merged.length > 0 && (prevLocal || []).length > 0) {
+          syncCartToSupabase(uid, merged);
+        }
+        return merged;
+      });
+    });
+
+    return () => {
+      active = false;
+    };
   }, [user?.id]);
 
-  // Persist locally & sync to Supabase
+  // Persist locally & sync to Supabase (only after cloud hydration for the signed-in user)
   useEffect(() => {
     try {
       localStorage.setItem('krmu_cart', JSON.stringify(items));
-      if (user?.id && user.id.includes('-')) {
+      if (user?.id && user.id.includes('-') && hydratedUserIdRef.current === user.id) {
         syncCartToSupabase(user.id, items);
       }
     } catch (e) {

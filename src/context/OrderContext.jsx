@@ -66,34 +66,52 @@ export const OrderProvider = ({ children }) => {
 
   const [orders, setOrders] = useState(() => {
     try {
-      const saved = localStorage.getItem('krmu_orders');
-      return saved ? JSON.parse(saved) : INITIAL_ORDERS;
+      const saved = localStorage.getItem('krmu_guest_orders');
+      return saved ? JSON.parse(saved) : [];
     } catch (e) {
-      return INITIAL_ORDERS;
+      return [];
     }
   });
 
-  // Pull orders from Supabase on mount / user change
+  // Pull orders from Supabase on auth change
   useEffect(() => {
+    let active = true;
+    localStorage.removeItem('krmu_orders');
+
     async function loadSupabaseOrders() {
+      if (!user?.id || !user.id.includes('-')) {
+        try {
+          const guest = localStorage.getItem('krmu_guest_orders');
+          if (active) setOrders(guest ? JSON.parse(guest) : []);
+        } catch {
+          if (active) setOrders([]);
+        }
+        return;
+      }
+
       // If admin, load all orders; if customer with uuid, load their orders
-      const userIdToQuery = isAdmin ? null : (user?.id && user.id.includes('-') ? user.id : null);
+      const userIdToQuery = isAdmin ? null : user.id;
       const cloudOrders = await fetchSupabaseOrders(userIdToQuery);
-      if (cloudOrders && cloudOrders.length > 0) {
+      if (active && Array.isArray(cloudOrders)) {
         setOrders(cloudOrders);
       }
     }
 
     loadSupabaseOrders();
+    return () => {
+      active = false;
+    };
   }, [user?.id, isAdmin]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('krmu_orders', JSON.stringify(orders));
+      if (!user?.id) {
+        localStorage.setItem('krmu_guest_orders', JSON.stringify(orders));
+      }
     } catch (e) {
       console.error(e);
     }
-  }, [orders]);
+  }, [orders, user?.id]);
 
   const createOrder = async (orderData) => {
     const newOrderId = `KRMU-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -148,25 +166,25 @@ export const OrderProvider = ({ children }) => {
   };
 
   const updateOrderStatus = async (orderId, newStatus) => {
-    // 1. Update Supabase
-    await updateSupabaseOrderStatus(orderId, newStatus);
+    const existing = orders.find((o) => o.id === orderId);
+    const nowStr = new Date().toLocaleString();
+    const updatedTimeline = existing?.timeline
+      ? existing.timeline.map((step) =>
+          step.status.toLowerCase().includes(newStatus.toLowerCase())
+            ? { ...step, date: nowStr, completed: true }
+            : step
+        )
+      : null;
 
-    // 2. Update local state
+    await updateSupabaseOrderStatus(orderId, newStatus, updatedTimeline);
+
     setOrders((prev) =>
       prev.map((order) => {
         if (order.id === orderId) {
-          const nowStr = new Date().toLocaleString();
-          const updatedTimeline = order.timeline.map((step) => {
-            if (step.status.toLowerCase().includes(newStatus.toLowerCase())) {
-              return { ...step, date: nowStr, completed: true };
-            }
-            return step;
-          });
-
           return {
             ...order,
             status: newStatus,
-            timeline: updatedTimeline
+            timeline: updatedTimeline || order.timeline,
           };
         }
         return order;

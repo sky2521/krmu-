@@ -74,7 +74,7 @@ export default function CheckoutPage() {
     });
   };
 
-  const completeOrderProcessing = (paymentDetails) => {
+  const completeOrderProcessing = async (paymentDetails) => {
     const orderData = {
       customer: {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
@@ -110,7 +110,7 @@ export default function CheckoutPage() {
       deliveryMethod: shippingMethod === 'whiteglove' ? "Atelier White Glove Courier" : "Standard Express Courier"
     };
 
-    const newOrder = createOrder(orderData);
+    const newOrder = await createOrder(orderData);
     clearCart();
 
     // Trigger celebration confetti

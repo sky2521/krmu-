@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   TrendingUp, 
@@ -8,38 +8,103 @@ import {
   CreditCard, 
   Plus, 
   Trash2, 
-  Edit3, 
   Check, 
   X, 
   Key, 
   RefreshCw, 
   ShieldCheck, 
-  ArrowRight,
-  SlidersHorizontal,
   Truck,
   Database,
   Copy,
   CheckCircle2,
   ExternalLink,
   FileSpreadsheet,
-  Upload
+  Upload,
+  Lock,
+  Mail
 } from 'lucide-react';
 import { useProducts } from '../../context/ProductContext';
 import { useOrders } from '../../context/OrderContext';
 import { useAuth } from '../../context/AuthContext';
 import { getRazorpayKey, setRazorpayKey, DEFAULT_RAZORPAY_TEST_KEY } from '../../services/razorpay';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../../services/supabase';
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  fetchAdminProfiles,
+  updateAdminProfileRole,
+  fetchAdminInquiries,
+  updateAdminInquiryStatus,
+  fetchAdminNewsletterSubscribers,
+  deleteAdminNewsletterSubscriber,
+} from '../../services/supabase';
+
+const HARDENED_CLEANUP_SQL = `-- Run once in Supabase SQL Editor to remove legacy open policies
+-- and lock SECURITY DEFINER triggers against direct public RPC calls:
+DROP POLICY IF EXISTS "Allow all profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Allow all addresses" ON public.addresses;
+DROP POLICY IF EXISTS "Allow all cart_items" ON public.cart_items;
+DROP POLICY IF EXISTS "Allow all orders" ON public.orders;
+DROP POLICY IF EXISTS "Allow all order_items" ON public.order_items;
+DROP POLICY IF EXISTS "Allow all contact" ON public.contact_inquiries;
+DROP POLICY IF EXISTS "Allow all newsletter" ON public.newsletter_subscribers;
+DROP POLICY IF EXISTS "Allow all reviews" ON public.product_reviews;
+
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated;
+
+-- Reapply minimal grants:
+REVOKE ALL ON public.profiles, public.addresses, public.cart_items, public.orders,
+  public.order_items, public.contact_inquiries, public.newsletter_subscribers,
+  public.product_reviews, public.products FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles, public.addresses, public.cart_items TO authenticated;
+GRANT INSERT ON public.orders, public.order_items, public.contact_inquiries, public.newsletter_subscribers TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.orders, public.contact_inquiries, public.products TO authenticated;
+GRANT SELECT, INSERT, DELETE ON public.order_items, public.newsletter_subscribers TO authenticated;
+GRANT SELECT, INSERT ON public.product_reviews TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_reviews TO authenticated;
+GRANT SELECT ON public.products TO anon;`;
 
 export default function AdminDashboard() {
   const { products, addProduct, updateProduct, deleteProduct, resetToDefaults, importProductsFromCsv } = useProducts();
   const { orders, updateOrderStatus } = useOrders();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, openLogin, refreshProfile } = useAuth();
 
-  const [activeAdminTab, setActiveAdminTab] = useState('orders'); // orders, products, settings, backend
+  const [activeAdminTab, setActiveAdminTab] = useState('orders'); // orders, products, crm, settings, backend
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedPromoteSql, setCopiedPromoteSql] = useState(false);
+  const [checkingRole, setCheckingRole] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [importStatus, setImportStatus] = useState(null);
+
+  // Supabase CRM Database Management state
+  const [crmProfiles, setCrmProfiles] = useState([]);
+  const [crmInquiries, setCrmInquiries] = useState([]);
+  const [crmSubscribers, setCrmSubscribers] = useState([]);
+  const [crmLoading, setCrmLoading] = useState(false);
+
+  const loadCrmData = useCallback(async () => {
+    if (!isAdmin) return;
+    setCrmLoading(true);
+    try {
+      const [profilesRes, inquiriesRes, subsRes] = await Promise.all([
+        fetchAdminProfiles(),
+        fetchAdminInquiries(),
+        fetchAdminNewsletterSubscribers(),
+      ]);
+      setCrmProfiles(profilesRes.data || []);
+      setCrmInquiries(inquiriesRes.data || []);
+      setCrmSubscribers(subsRes.data || []);
+    } finally {
+      setCrmLoading(false);
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadCrmData();
+    }
+  }, [isAdmin, loadCrmData]);
 
   // Razorpay Key Configuration
   const [currentRzpKey, setCurrentRzpKey] = useState(getRazorpayKey());
@@ -103,7 +168,6 @@ export default function AdminDashboard() {
       isNewArrival: true,
       isBestseller: false,
       images: ['https://images.unsplash.com/photo-1544441893-675973e31985?q=80&w=1200&auto=format&fit=crop'],
-      colors: [{ name: 'Onyx Noir', hex: '#161616' }],
       sizes: ['S', 'M', 'L', 'XL'],
       description: 'New atelier addition with clean lines.',
       details: ['Handcrafted in India', '100% pure fibers'],
@@ -111,6 +175,108 @@ export default function AdminDashboard() {
       fit: 'True to size.'
     });
   };
+
+  // Gate Admin Dashboard strictly to authenticated Supabase admins
+  if (!user) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-24 text-center space-y-6">
+        <div className="w-16 h-16 bg-[#F3EFEA] rounded-full flex items-center justify-center mx-auto text-[#121214]">
+          <Lock className="w-7 h-7 stroke-1" />
+        </div>
+        <div className="space-y-2">
+          <span className="text-[10px] uppercase tracking-[0.25em] text-[#C5A059] font-bold">
+            Supabase RLS Protected Portal
+          </span>
+          <h2 className="font-serif text-3xl sm:text-4xl text-[#121214]">
+            Atelier Admin Sign-In Required
+          </h2>
+          <p className="text-xs sm:text-sm text-[#7F7972] max-w-md mx-auto">
+            Sign in with an administrator account stored in your Supabase project to manage live orders, inventory, client profiles, inquiries, and subscribers.
+          </p>
+        </div>
+        <button
+          onClick={openLogin}
+          className="px-8 py-3.5 bg-[#121214] text-white hover:bg-[#C5A059] transition-colors text-xs uppercase tracking-[0.25em] font-semibold"
+        >
+          Sign In with Supabase
+        </button>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    const promoteSql = `UPDATE public.profiles SET role = 'admin' WHERE id = '${user.id}';`;
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 space-y-6">
+        <div className="bg-white border border-[#E6DED5] rounded-sm p-8 space-y-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-700">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-[0.25em] text-amber-700 font-bold">
+                Role: {user.role || 'customer'}
+              </span>
+              <h2 className="font-serif text-2xl text-[#121214]">
+                Administrator Privilege Required
+              </h2>
+            </div>
+          </div>
+
+          <p className="text-xs text-[#5C5750] leading-relaxed">
+            You are signed in as <strong>{user.email}</strong> (<code>{user.id}</code>). For security, newly registered accounts default to <code>customer</code>. If you are the store owner, run this one-time SQL command in your{' '}
+            <a
+              href="https://supabase.com/dashboard/project/uwbgoymzaxyhhiefzhcb/sql/new"
+              target="_blank"
+              rel="noreferrer"
+              className="underline font-semibold text-[#121214]"
+            >
+              Supabase SQL Editor
+            </a>{' '}
+            to grant yourself Admin access, then click Refresh Permissions:
+          </p>
+
+          <div className="bg-[#121214] text-emerald-300 p-4 rounded-sm font-mono text-xs overflow-x-auto flex items-center justify-between gap-3">
+            <code>{promoteSql}</code>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(promoteSql);
+                setCopiedPromoteSql(true);
+                setTimeout(() => setCopiedPromoteSql(false), 2000);
+              }}
+              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-sm shrink-0 text-[11px] flex items-center gap-1"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>{copiedPromoteSql ? 'Copied' : 'Copy'}</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-3 pt-1">
+            <button
+              type="button"
+              disabled={checkingRole}
+              onClick={async () => {
+                setCheckingRole(true);
+                await refreshProfile();
+                setCheckingRole(false);
+              }}
+              className="px-6 py-2.5 bg-[#121214] text-white hover:bg-[#C5A059] transition-colors text-xs uppercase tracking-widest font-semibold flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${checkingRole ? 'animate-spin' : ''}`} />
+              <span>{checkingRole ? 'Checking Supabase...' : 'Refresh Permissions'}</span>
+            </button>
+            <Link
+              to="/account"
+              className="px-6 py-2.5 border border-[#D5C7B8] text-xs uppercase tracking-widest font-semibold text-[#121214] hover:border-black"
+            >
+              Back to My Account
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -191,7 +357,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Tabs Selector */}
-      <div className="border-b border-[#E6DED5] flex space-x-6 text-xs uppercase tracking-widest font-semibold">
+      <div className="border-b border-[#E6DED5] flex flex-wrap gap-x-6 gap-y-2 text-xs uppercase tracking-widest font-semibold">
         <button
           onClick={() => setActiveAdminTab('orders')}
           className={`pb-3 border-b-2 transition-colors ${
@@ -212,6 +378,18 @@ export default function AdminDashboard() {
           }`}
         >
           Product Catalog ({products.length})
+        </button>
+
+        <button
+          onClick={() => setActiveAdminTab('crm')}
+          className={`pb-3 border-b-2 transition-colors flex items-center gap-1.5 ${
+            activeAdminTab === 'crm'
+              ? 'border-[#121214] text-[#121214]'
+              : 'border-transparent text-[#7F7972] hover:text-black'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5 text-[#C5A059]" />
+          <span>Clients & Inquiries ({crmProfiles.length})</span>
         </button>
 
         <button
@@ -435,7 +613,211 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* TAB 3: RAZORPAY CONFIGURATION */}
+      {/* TAB 3: CLIENTS, INQUIRIES & NEWSLETTER DATABASE MANAGEMENT */}
+      {activeAdminTab === 'crm' && (
+        <div className="space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-serif text-xl text-[#121214]">Supabase Database CRM Console</h3>
+              <p className="text-xs text-[#7F7972]">
+                Live registered accounts, customer concierge inquiries, and newsletter subscribers stored in Supabase.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={crmLoading}
+              onClick={loadCrmData}
+              className="px-4 py-2 border border-[#D5C7B8] hover:border-black text-xs uppercase tracking-widest font-semibold flex items-center gap-1.5 rounded-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${crmLoading ? 'animate-spin' : ''}`} />
+              <span>{crmLoading ? 'Syncing...' : 'Refresh Database'}</span>
+            </button>
+          </div>
+
+          {/* 1. Registered Users Table */}
+          <div className="space-y-3">
+            <h4 className="text-xs uppercase tracking-widest font-bold text-[#121214] flex items-center gap-2">
+              <Users className="w-4 h-4 text-[#C5A059]" />
+              <span>Registered Client Accounts (`public.profiles`: {crmProfiles.length})</span>
+            </h4>
+            <div className="bg-white border border-[#E6DED5] rounded-sm overflow-x-auto shadow-sm">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-[#FAF8F5] text-[#121214] uppercase tracking-wider border-b border-[#E6DED5]">
+                  <tr>
+                    <th className="p-3.5 font-semibold">Client</th>
+                    <th className="p-3.5 font-semibold">Email</th>
+                    <th className="p-3.5 font-semibold">Phone</th>
+                    <th className="p-3.5 font-semibold">Joined</th>
+                    <th className="p-3.5 font-semibold">Role</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0ECE5] text-[#5C5750]">
+                  {crmProfiles.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-[#7F7972]">
+                        No registered user profiles found yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    crmProfiles.map((prof) => (
+                      <tr key={prof.id} className="hover:bg-[#FAF8F5]/80">
+                        <td className="p-3.5 font-semibold text-[#121214]">
+                          {prof.full_name || 'Unnamed Client'}
+                        </td>
+                        <td className="p-3.5 font-mono text-[11px]">{prof.email}</td>
+                        <td className="p-3.5">{prof.phone || '—'}</td>
+                        <td className="p-3.5 text-[11px]">
+                          {prof.created_at ? new Date(prof.created_at).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="p-3.5">
+                          <select
+                            value={prof.role || 'customer'}
+                            onChange={async (e) => {
+                              const nextRole = e.target.value;
+                              const res = await updateAdminProfileRole(prof.id, nextRole);
+                              if (res.success) {
+                                setCrmProfiles((prev) =>
+                                  prev.map((p) => (p.id === prof.id ? { ...p, role: nextRole } : p))
+                                );
+                              }
+                            }}
+                            className="border border-[#D5C7B8] px-2 py-1 text-xs font-semibold rounded-sm bg-white"
+                          >
+                            <option value="customer">customer</option>
+                            <option value="admin">admin</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 2. Concierge Contact Inquiries */}
+          <div className="space-y-3">
+            <h4 className="text-xs uppercase tracking-widest font-bold text-[#121214] flex items-center gap-2">
+              <Mail className="w-4 h-4 text-[#C5A059]" />
+              <span>Concierge Inquiries (`public.contact_inquiries`: {crmInquiries.length})</span>
+            </h4>
+            <div className="bg-white border border-[#E6DED5] rounded-sm overflow-x-auto shadow-sm">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-[#FAF8F5] text-[#121214] uppercase tracking-wider border-b border-[#E6DED5]">
+                  <tr>
+                    <th className="p-3.5 font-semibold">Sender</th>
+                    <th className="p-3.5 font-semibold">Subject & Message</th>
+                    <th className="p-3.5 font-semibold">Date</th>
+                    <th className="p-3.5 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0ECE5] text-[#5C5750]">
+                  {crmInquiries.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-[#7F7972]">
+                        No contact form inquiries submitted yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    crmInquiries.map((inq) => (
+                      <tr key={inq.id} className="hover:bg-[#FAF8F5]/80">
+                        <td className="p-3.5">
+                          <p className="font-semibold text-[#121214]">{inq.name}</p>
+                          <p className="text-[11px] font-mono">{inq.email}</p>
+                          {inq.phone && <p className="text-[10px] text-[#7F7972]">{inq.phone}</p>}
+                        </td>
+                        <td className="p-3.5 max-w-md">
+                          <p className="font-semibold text-[#121214]">{inq.subject}</p>
+                          <p className="text-[11px] text-[#5C5750] mt-0.5 line-clamp-2">{inq.message}</p>
+                        </td>
+                        <td className="p-3.5 text-[11px]">
+                          {inq.created_at ? new Date(inq.created_at).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="p-3.5">
+                          <select
+                            value={inq.status || 'New'}
+                            onChange={async (e) => {
+                              const nextStatus = e.target.value;
+                              const res = await updateAdminInquiryStatus(inq.id, nextStatus);
+                              if (res.success) {
+                                setCrmInquiries((prev) =>
+                                  prev.map((item) =>
+                                    item.id === inq.id ? { ...item, status: nextStatus } : item
+                                  )
+                                );
+                              }
+                            }}
+                            className="border border-[#D5C7B8] px-2 py-1 text-xs font-semibold rounded-sm bg-white"
+                          >
+                            <option value="New">New</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Resolved">Resolved</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 3. Newsletter Subscribers */}
+          <div className="space-y-3">
+            <h4 className="text-xs uppercase tracking-widest font-bold text-[#121214]">
+              Newsletter Subscribers (`public.newsletter_subscribers`: {crmSubscribers.length})
+            </h4>
+            <div className="bg-white border border-[#E6DED5] rounded-sm overflow-x-auto shadow-sm">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-[#FAF8F5] text-[#121214] uppercase tracking-wider border-b border-[#E6DED5]">
+                  <tr>
+                    <th className="p-3.5 font-semibold">Email Address</th>
+                    <th className="p-3.5 font-semibold">Privilege Code</th>
+                    <th className="p-3.5 font-semibold">Subscribed</th>
+                    <th className="p-3.5 font-semibold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#F0ECE5] text-[#5C5750]">
+                  {crmSubscribers.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-6 text-center text-[#7F7972]">
+                        No newsletter subscribers recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    crmSubscribers.map((sub) => (
+                      <tr key={sub.id} className="hover:bg-[#FAF8F5]/80">
+                        <td className="p-3.5 font-mono text-[#121214]">{sub.email}</td>
+                        <td className="p-3.5 font-mono text-[11px]">{sub.coupon_sent || 'KRMU10'}</td>
+                        <td className="p-3.5 text-[11px]">
+                          {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const res = await deleteAdminNewsletterSubscriber(sub.id);
+                              if (res.success) {
+                                setCrmSubscribers((prev) => prev.filter((s) => s.id !== sub.id));
+                              }
+                            }}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                            title="Remove subscriber"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: RAZORPAY CONFIGURATION */}
       {activeAdminTab === 'settings' && (
         <div className="bg-white border border-[#E6DED5] rounded-sm p-6 sm:p-8 space-y-6 max-w-2xl shadow-sm">
           <div className="space-y-1 border-b border-[#F0ECE5] pb-4">
@@ -559,11 +941,12 @@ export default function AdminDashboard() {
               <h4 className="text-xs uppercase tracking-widest font-bold text-[#121214]">
                 Configured Database Tables & Features:
               </h4>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                 {[
                   { name: 'public.profiles', desc: 'User accounts & roles' },
                   { name: 'public.addresses', desc: 'Saved delivery destinations' },
                   { name: 'public.cart_items', desc: 'Cloud synced bags' },
+                  { name: 'public.products', desc: 'Live catalog & stock' },
                   { name: 'public.orders', desc: 'Razorpay & COD orders' },
                   { name: 'public.order_items', desc: 'Purchased garments' },
                   { name: 'public.contact_inquiries', desc: 'Website concierge forms' },
@@ -582,171 +965,32 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* SQL Setup Instructions & Code Display */}
+          {/* SQL Setup & Security Hardening Cleanup */}
           <div className="bg-white border border-[#E6DED5] rounded-sm p-6 sm:p-8 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <h4 className="font-serif text-xl text-[#121214]">SQL Setup Script (`supabase/schema.sql`)</h4>
+                <h4 className="font-serif text-xl text-[#121214]">RLS Security Finalization SQL</h4>
                 <p className="text-xs text-[#7F7972]">
-                  Run this SQL in your Supabase SQL Editor to initialize all tables, foreign keys, and RLS policies.
+                  All 9 tables, strict RLS policies, indexes, and 18 products are applied. Run this cleanup block once in SQL Editor to drop legacy open policies.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard.writeText(`-- KRMU APPAREL SCHEMA
-create table if not exists public.profiles (
-  id uuid references auth.users on delete cascade primary key,
-  full_name text,
-  email text,
-  phone text,
-  role text default 'customer',
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-create or replace function public.handle_new_user()
-returns trigger as $$
-begin
-  insert into public.profiles (id, full_name, email, phone, role)
-  values (
-    new.id,
-    coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    new.email,
-    new.raw_user_meta_data->>'phone',
-    case when new.email ilike '%admin%' then 'admin' else 'customer' end
-  )
-  on conflict (id) do update set
-    full_name = excluded.full_name,
-    email = excluded.email,
-    updated_at = now();
-  return new;
-end;
-$$ language plpgsql security definer;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.handle_new_user();
-
-create table if not exists public.addresses (
-  id uuid default gen_random_uuid() primary key,
-  user_id uuid references public.profiles(id) on delete cascade,
-  name text not null,
-  phone text,
-  street text not null,
-  city text not null,
-  state text not null,
-  pincode text not null,
-  is_default boolean default false,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.cart_items (
-  id uuid default gen_random_uuid() primary key,
-  user_id uuid references public.profiles(id) on delete cascade,
-  product_id text not null,
-  name text not null,
-  slug text,
-  price numeric not null,
-  original_price numeric,
-  image text,
-  size text not null,
-  color jsonb not null default '{}'::jsonb,
-  quantity integer not null default 1,
-  updated_at timestamptz default now()
-);
-
-create table if not exists public.orders (
-  id text primary key,
-  user_id uuid references public.profiles(id) on delete set null,
-  customer_name text not null,
-  customer_email text not null,
-  customer_phone text not null,
-  shipping_address jsonb not null default '{}'::jsonb,
-  pricing jsonb not null default '{}'::jsonb,
-  payment_method text not null default 'Razorpay Online',
-  payment_id text,
-  payment_status text not null default 'Paid',
-  delivery_method text not null default 'Standard Express Courier',
-  status text not null default 'Confirmed',
-  tracking_number text,
-  carrier text not null default 'BlueDart Express Air',
-  estimated_delivery text,
-  timeline jsonb not null default '[]'::jsonb,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-create table if not exists public.order_items (
-  id uuid default gen_random_uuid() primary key,
-  order_id text references public.orders(id) on delete cascade,
-  product_id text not null,
-  name text not null,
-  price numeric not null,
-  quantity integer not null default 1,
-  size text not null,
-  color jsonb default '{}'::jsonb,
-  image text,
-  created_at timestamptz default now()
-);
-
-create table if not exists public.contact_inquiries (
-  id uuid default gen_random_uuid() primary key,
-  name text not null,
-  email text not null,
-  phone text,
-  subject text not null default 'General Inquiry',
-  message text not null,
-  status text not null default 'New',
-  created_at timestamptz default now()
-);
-
-create table if not exists public.newsletter_subscribers (
-  id uuid default gen_random_uuid() primary key,
-  email text unique not null,
-  coupon_sent text default 'KRMU10',
-  created_at timestamptz default now()
-);
-
-alter table public.profiles enable row level security;
-alter table public.addresses enable row level security;
-alter table public.cart_items enable row level security;
-alter table public.orders enable row level security;
-alter table public.order_items enable row level security;
-alter table public.contact_inquiries enable row level security;
-alter table public.newsletter_subscribers enable row level security;
-
-create policy "Allow all profiles" on public.profiles for all using (true);
-create policy "Allow all addresses" on public.addresses for all using (true);
-create policy "Allow all cart_items" on public.cart_items for all using (true);
-create policy "Allow all orders" on public.orders for all using (true);
-create policy "Allow all order_items" on public.order_items for all using (true);
-create policy "Allow all contact" on public.contact_inquiries for all using (true);
-create policy "Allow all newsletter" on public.newsletter_subscribers for all using (true);
-`);
+                  navigator.clipboard.writeText(HARDENED_CLEANUP_SQL);
                   setCopiedSql(true);
                   setTimeout(() => setCopiedSql(false), 2000);
                 }}
-                className="px-4 py-2 border border-[#D5C7B8] hover:border-black text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                className="px-4 py-2 border border-[#D5C7B8] hover:border-black text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5 transition-colors shrink-0"
               >
                 <Copy className="w-3.5 h-3.5" />
-                <span>{copiedSql ? 'Copied to Clipboard!' : 'Copy SQL Schema'}</span>
+                <span>{copiedSql ? 'Copied to Clipboard!' : 'Copy Cleanup SQL'}</span>
               </button>
             </div>
 
-            <div className="bg-[#121214] text-neutral-300 p-4 rounded-sm font-mono text-[11px] overflow-x-auto max-h-64 divide-y divide-neutral-800">
-              <pre>{`-- File: supabase/schema.sql
--- All 8 tables with relationships, RLS, and triggers included.
--- 1. profiles (linked to auth.users)
--- 2. addresses (user address book)
--- 3. cart_items (cloud persistent cart)
--- 4. orders (full order details & tracking)
--- 5. order_items (items per order)
--- 6. contact_inquiries (concierge messages)
--- 7. newsletter_subscribers (subscribers list)
--- 8. product_reviews (verified client feedback)`}</pre>
+            <div className="bg-[#121214] text-neutral-300 p-4 rounded-sm font-mono text-[11px] overflow-x-auto max-h-64">
+              <pre>{HARDENED_CLEANUP_SQL}</pre>
             </div>
           </div>
         </div>

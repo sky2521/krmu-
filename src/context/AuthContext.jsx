@@ -1,74 +1,80 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  supabase, 
-  authSignUp, 
-  authSignIn, 
-  authSignOut, 
-  fetchProfile, 
-  upsertProfile, 
-  fetchUserAddresses, 
-  addUserAddress, 
-  removeUserAddress 
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  supabase,
+  authSignIn,
+  authSignUp,
+  authSignOut,
+  authResendConfirmation,
+  authResetPassword,
+  authUpdatePassword,
+  upsertProfile,
+  fetchProfile,
+  fetchUserAddresses,
+  addUserAddress,
+  removeUserAddress,
 } from '../services/supabase';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
-const DEMO_USER = {
-  id: "usr_krmu_01",
-  name: "Kabir Mehra",
-  email: "kabir@example.com",
-  phone: "+91 98765 43210",
-  role: "admin",
-  addresses: [
-    {
-      id: "addr_1",
-      name: "Kabir Mehra",
-      phone: "+91 98765 43210",
-      street: "Villa 14, The Magnolias, Golf Course Road, Sector 42",
-      city: "Gurugram",
-      state: "Haryana",
-      pincode: "122002",
-      isDefault: true
-    }
-  ]
-};
+function buildAppUser(supaUser, profile = null, addresses = []) {
+  return {
+    id: supaUser.id,
+    name:
+      profile?.full_name ||
+      supaUser.user_metadata?.full_name ||
+      supaUser.email?.split('@')[0] ||
+      'KRMU Client',
+    email: supaUser.email,
+    phone: profile?.phone || supaUser.user_metadata?.phone || '',
+    role: profile?.role || supaUser.app_metadata?.role || 'customer',
+    addresses: Array.isArray(addresses) ? addresses : [],
+  };
+}
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('krmu_user');
-      return saved ? JSON.parse(saved) : DEMO_USER;
-    } catch (e) {
-      return DEMO_USER;
-    }
-  });
-
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'register'
+  const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'register' | 'forgot' | 'recovery'
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
-  // Sync Supabase Auth session on mount and listen to changes
+  const hydrateUserSession = useCallback(async (supaUser) => {
+    if (!supaUser) {
+      setUser(null);
+      localStorage.removeItem('krmu_user');
+      return null;
+    }
+
+    const [profile, addresses] = await Promise.all([
+      fetchProfile(supaUser.id),
+      fetchUserAddresses(supaUser.id),
+    ]);
+
+    const appUser = buildAppUser(supaUser, profile, addresses);
+    setUser(appUser);
+    return appUser;
+  }, []);
+
   useEffect(() => {
     let mounted = true;
+    // Clear legacy mock user cache so only active Supabase Auth sessions authenticate
+    localStorage.removeItem('krmu_user');
 
     async function initAuth() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user && mounted) {
-          const profile = await fetchProfile(session.user.id);
-          const addresses = await fetchUserAddresses(session.user.id);
-          
-          setUser({
-            id: session.user.id,
-            name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email.split('@')[0],
-            email: session.user.email,
-            phone: profile?.phone || session.user.user_metadata?.phone || '',
-            role: profile?.role || (session.user.email.includes('admin') ? 'admin' : 'customer'),
-            addresses: addresses || []
-          });
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+
+        if (!error && session?.user && mounted) {
+          await hydrateUserSession(session.user);
+        } else if (mounted) {
+          setUser(null);
         }
       } catch (err) {
-        console.warn('Supabase getSession fallback:', err);
+        console.warn('Supabase session check failed:', err);
+        if (mounted) setUser(null);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -76,21 +82,33 @@ export const AuthProvider = ({ children }) => {
 
     initAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        const profile = await fetchProfile(session.user.id);
-        const addresses = await fetchUserAddresses(session.user.id);
-        
-        setUser({
-          id: session.user.id,
-          name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email.split('@')[0],
-          email: session.user.email,
-          phone: profile?.phone || session.user.user_metadata?.phone || '',
-          role: profile?.role || (session.user.email.includes('admin') ? 'admin' : 'customer'),
-          addresses: addresses || []
-        });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsPasswordRecovery(true);
+        setAuthModalMode('recovery');
+        setIsAuthModalOpen(true);
+      }
+
+      if (
+        (event === 'SIGNED_IN' ||
+          event === 'TOKEN_REFRESHED' ||
+          event === 'USER_UPDATED') &&
+        session?.user
+      ) {
+        // Defer DB reads outside GoTrue lock callback
+        setTimeout(() => {
+          if (mounted) {
+            hydrateUserSession(session.user);
+          }
+        }, 0);
       } else if (event === 'SIGNED_OUT') {
-        // Do not wipe demo user immediately if local testing
+        setUser(null);
+        setIsPasswordRecovery(false);
+        localStorage.removeItem('krmu_user');
       }
     });
 
@@ -98,105 +116,82 @@ export const AuthProvider = ({ children }) => {
       mounted = false;
       subscription?.unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    try {
-      if (user) {
-        localStorage.setItem('krmu_user', JSON.stringify(user));
-      } else {
-        localStorage.removeItem('krmu_user');
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [user]);
+  }, [hydrateUserSession]);
 
   const login = async (email, password) => {
-    // 1. Attempt Supabase Auth signIn
     const { user: supaUser, error } = await authSignIn(email, password);
 
-    if (supaUser) {
-      const profile = await fetchProfile(supaUser.id);
-      const addresses = await fetchUserAddresses(supaUser.id);
-
-      const loggedUser = {
-        id: supaUser.id,
-        name: profile?.full_name || supaUser.user_metadata?.full_name || email.split('@')[0],
-        email: supaUser.email,
-        phone: profile?.phone || '',
-        role: profile?.role || (email.toLowerCase().includes('admin') ? 'admin' : 'customer'),
-        addresses: addresses || []
+    if (error || !supaUser) {
+      return {
+        success: false,
+        error: error || 'Invalid email or password.',
       };
-      setUser(loggedUser);
-      setIsAuthModalOpen(false);
-      return { success: true };
     }
 
-    // Fallback if user uses demo account or tables not yet executed
-    const isAdmin = email.toLowerCase().includes('admin');
-    const fallbackUser = {
-      id: `usr_${Date.now()}`,
-      name: email.split('@')[0].replace('.', ' ').toUpperCase(),
-      email,
-      phone: "+91 98765 43210",
-      role: isAdmin ? 'admin' : 'customer',
-      addresses: user?.addresses || [
-        {
-          id: "addr_default",
-          name: email.split('@')[0],
-          phone: "+91 98765 43210",
-          street: "42 Design Avenue, Bandra West",
-          city: "Mumbai",
-          state: "Maharashtra",
-          pincode: "400050",
-          isDefault: true
-        }
-      ]
-    };
-    setUser(fallbackUser);
+    await hydrateUserSession(supaUser);
     setIsAuthModalOpen(false);
-    return { success: true, isFallback: true };
+    return { success: true, error: null };
   };
 
   const register = async (name, email, password, phone) => {
-    // 1. Attempt Supabase Auth signUp
-    const { user: supaUser, error } = await authSignUp(email, password, {
-      fullName: name,
-      phone
-    });
+    const { user: supaUser, session, needsEmailConfirmation, error } = await authSignUp(
+      email,
+      password,
+      { fullName: name, phone }
+    );
 
-    if (supaUser) {
-      const newUser = {
-        id: supaUser.id,
-        name,
-        email,
-        phone: phone || '',
-        role: email.toLowerCase().includes('admin') ? 'admin' : 'customer',
-        addresses: []
+    if (error) {
+      return {
+        success: false,
+        needsEmailConfirmation: false,
+        error,
       };
-      setUser(newUser);
-      setIsAuthModalOpen(false);
-      return { success: true };
     }
 
-    // Fallback if offline/demo
-    const newUser = {
-      id: `usr_${Date.now()}`,
-      name,
-      email,
-      phone: phone || "+91 98765 43210",
-      role: email.toLowerCase().includes('admin') ? 'admin' : 'customer',
-      addresses: []
+    if (needsEmailConfirmation || !session) {
+      return {
+        success: true,
+        needsEmailConfirmation: true,
+        email: email.trim().toLowerCase(),
+        error: null,
+      };
+    }
+
+    if (supaUser) {
+      await hydrateUserSession(supaUser);
+      setIsAuthModalOpen(false);
+    }
+
+    return {
+      success: true,
+      needsEmailConfirmation: false,
+      error: null,
     };
-    setUser(newUser);
-    setIsAuthModalOpen(false);
-    return { success: true, isFallback: true };
+  };
+
+  const resendConfirmation = async (email) => {
+    return authResendConfirmation(email);
+  };
+
+  const sendPasswordReset = async (email) => {
+    return authResetPassword(email);
+  };
+
+  const completePasswordReset = async (newPassword) => {
+    const res = await authUpdatePassword(newPassword);
+    if (res.success && res.user) {
+      setIsPasswordRecovery(false);
+      await hydrateUserSession(res.user);
+      setIsAuthModalOpen(false);
+    }
+    return res;
   };
 
   const logout = async () => {
     await authSignOut();
     setUser(null);
+    setIsPasswordRecovery(false);
+    localStorage.removeItem('krmu_user');
   };
 
   const openLogin = () => {
@@ -210,75 +205,96 @@ export const AuthProvider = ({ children }) => {
   };
 
   const addAddress = async (newAddr) => {
-    if (!user) return;
+    if (!user?.id) return { success: false, error: 'Not signed in.' };
 
-    // Persist to Supabase if UUID user
-    if (user.id && user.id.includes('-')) {
-      await addUserAddress(user.id, newAddr);
-      const updated = await fetchUserAddresses(user.id);
-      if (updated && updated.length > 0) {
-        setUser({ ...user, addresses: updated });
-        return;
-      }
+    const inserted = await addUserAddress(user.id, newAddr);
+    if (!inserted) {
+      return { success: false, error: 'Failed to save address to database.' };
     }
 
-    // Local fallback
-    const addressWithId = {
-      ...newAddr,
-      id: `addr_${Date.now()}`,
-      isDefault: user.addresses.length === 0 || newAddr.isDefault
-    };
-    const updatedAddresses = newAddr.isDefault
-      ? user.addresses.map((a) => ({ ...a, isDefault: false })).concat(addressWithId)
-      : [...user.addresses, addressWithId];
-
-    setUser({
-      ...user,
-      addresses: updatedAddresses
-    });
+    setUser((prev) =>
+      prev ? { ...prev, addresses: [inserted, ...(prev.addresses || [])] } : null
+    );
+    return { success: true, address: inserted };
   };
 
   const deleteAddress = async (addressId) => {
-    if (!user) return;
-    if (user.id && user.id.includes('-')) {
-      await removeUserAddress(addressId);
-    }
-    setUser({
-      ...user,
-      addresses: user.addresses.filter((a) => a.id !== addressId)
-    });
+    if (!user?.id) return { success: false };
+
+    const ok = await removeUserAddress(addressId);
+    if (!ok) return { success: false };
+
+    setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            addresses: (prev.addresses || []).filter((a) => a.id !== addressId),
+          }
+        : null
+    );
+    return { success: true };
   };
 
   const updateProfileData = async (updatedData) => {
-    if (!user) return;
-    if (user.id && user.id.includes('-')) {
-      await upsertProfile(user.id, updatedData);
-    }
-    setUser({
-      ...user,
-      ...updatedData
+    if (!user?.id) return { success: false, error: 'Not signed in.' };
+
+    const saved = await upsertProfile(user.id, {
+      full_name: updatedData.name,
+      email: user.email,
+      phone: updatedData.phone,
     });
+
+    if (!saved) {
+      return { success: false, error: 'Could not update profile.' };
+    }
+
+    setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            name: saved.full_name || updatedData.name,
+            phone: saved.phone ?? updatedData.phone,
+            role: saved.role || prev.role,
+          }
+        : null
+    );
+    return { success: true };
+  };
+
+  const refreshProfile = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user) {
+      return hydrateUserSession(session.user);
+    }
+    return null;
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        loading,
         isAuthenticated: !!user,
         isAdmin: user?.role === 'admin',
-        loading,
-        login,
-        register,
-        logout,
         isAuthModalOpen,
         setIsAuthModalOpen,
         authModalMode,
         setAuthModalMode,
+        isPasswordRecovery,
+        login,
+        register,
+        logout,
+        resendConfirmation,
+        sendPasswordReset,
+        completePasswordReset,
         openLogin,
         openRegister,
         addAddress,
         deleteAddress,
-        updateProfile: updateProfileData
+        updateProfile: updateProfileData,
+        refreshProfile,
       }}
     >
       {children}

@@ -1,5 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { INITIAL_PRODUCTS } from '../data/products';
+import {
+  fetchSupabaseProducts,
+  upsertSupabaseProduct,
+  deleteSupabaseProduct,
+  syncCatalogToSupabase,
+  submitSupabaseProductReview,
+} from '../services/supabase';
 
 const ProductContext = createContext();
 
@@ -25,6 +32,19 @@ export const ProductProvider = ({ children }) => {
 
   const [activeQuickViewProduct, setActiveQuickViewProduct] = useState(null);
 
+  // Pull live catalog & reviews from Supabase on mount
+  useEffect(() => {
+    let mounted = true;
+    fetchSupabaseProducts().then((cloudProducts) => {
+      if (mounted && Array.isArray(cloudProducts) && cloudProducts.length > 0) {
+        setProducts(cloudProducts);
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     try {
       localStorage.setItem('krmu_catalog', JSON.stringify(products));
@@ -36,7 +56,7 @@ export const ProductProvider = ({ children }) => {
 
   const addProduct = (newProduct) => {
     const id = `krmu-${Date.now().toString().slice(-4)}`;
-    const slug = newProduct.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const slug = `${newProduct.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${id.slice(-4)}`;
     const created = {
       ...newProduct,
       id,
@@ -46,21 +66,31 @@ export const ProductProvider = ({ children }) => {
       reviews: []
     };
     setProducts((prev) => [created, ...prev]);
+    upsertSupabaseProduct(created);
     return created;
   };
 
   const updateProduct = (id, updatedFields) => {
     setProducts((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...updatedFields } : item))
+      prev.map((item) => {
+        if (item.id === id) {
+          const updated = { ...item, ...updatedFields };
+          upsertSupabaseProduct(updated);
+          return updated;
+        }
+        return item;
+      })
     );
   };
 
   const deleteProduct = (id) => {
     setProducts((prev) => prev.filter((item) => item.id !== id));
+    deleteSupabaseProduct(id);
   };
 
   const replaceCatalog = (newProducts) => {
     setProducts(newProducts);
+    syncCatalogToSupabase(newProducts);
     try {
       localStorage.setItem('krmu_catalog', JSON.stringify(newProducts));
       localStorage.setItem('krmu_catalog_ver', CATALOG_VERSION);
@@ -142,13 +172,18 @@ export const ProductProvider = ({ children }) => {
     }
   };
 
-  const addProductReview = (productId, reviewData) => {
+  const addProductReview = async (productId, reviewData) => {
+    const res = await submitSupabaseProductReview(productId, reviewData);
+    const saved = res?.data;
+
     setProducts((prev) =>
       prev.map((item) => {
         if (item.id === productId) {
           const newReview = {
-            id: `rev-${Date.now()}`,
-            date: new Date().toISOString().split('T')[0],
+            id: saved?.id || `rev-${Date.now()}`,
+            date: saved?.created_at
+              ? saved.created_at.split('T')[0]
+              : new Date().toISOString().split('T')[0],
             verified: true,
             ...reviewData
           };
@@ -161,7 +196,7 @@ export const ProductProvider = ({ children }) => {
             ...item,
             reviews: updatedReviews,
             rating: parseFloat(avgRating),
-            reviewCount: updatedReviews.length
+            reviewCount: Math.max(item.reviewCount || 0, updatedReviews.length)
           };
         }
         return item;
@@ -171,6 +206,7 @@ export const ProductProvider = ({ children }) => {
 
   const resetToDefaults = () => {
     setProducts(INITIAL_PRODUCTS);
+    syncCatalogToSupabase(INITIAL_PRODUCTS);
     localStorage.setItem('krmu_catalog', JSON.stringify(INITIAL_PRODUCTS));
     localStorage.setItem('krmu_catalog_ver', CATALOG_VERSION);
   };
