@@ -1,4 +1,75 @@
 export const INITIAL_PRODUCTS = [
+  // ===================== SIGNATURE COLLECTOR DROPS =====================
+  {
+    id: "krmu-01-bottle",
+    name: "KRMU Atelier Insulated Steel Bottle",
+    slug: "krmu-atelier-insulated-steel-bottle",
+    category: "accessories",
+    subcategory: "accessories",
+    badge: "₹1 Atelier Drop",
+    isNewArrival: true,
+    isBestseller: true,
+    price: 1,
+    originalPrice: null,
+    stock: 50,
+    rating: 4.9,
+    reviewCount: 41,
+    images: [
+      "https://images.unsplash.com/photo-1782582270361-262dac15aa4f?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1544003484-3cd181d17917?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1611517985210-56438421ab85?q=80&w=1200&auto=format&fit=crop"
+    ],
+    colors: [
+      { name: "Brushed Steel", hex: "#B8BCC2" },
+      { name: "Obsidian Matte", hex: "#141416" }
+    ],
+    sizes: ["750ml", "500ml", "1L"],
+    description: "Double-walled 18/8 medical-grade stainless steel hydration vessel finished with a condensation-free matte silhouette and precision screw cap. Keeps cold drinks chilled for 24 hours — offered as an exclusive ₹1 Atelier Community Edition.",
+    details: [
+      "18/8 Food-Grade Stainless Steel, 100% BPA-Free",
+      "Double-wall vacuum copper-lined insulation",
+      "Leak-proof precision-milled steel cap",
+      "Complimentary Standard Express Dispatch included"
+    ],
+    care: "Hand wash with warm soapy water. Do not freeze or microwave.",
+    fit: "750ml slim architectural cylinder fits car cup holders and tote sleeves.",
+    reviews: []
+  },
+  {
+    id: "krmu-02-jordan",
+    name: "Air Jordan 1 Retro High OG — Vault Edition",
+    slug: "air-jordan-1-retro-high-og-vault",
+    category: "men",
+    subcategory: "footwear",
+    badge: "Vault Collector",
+    isNewArrival: true,
+    isBestseller: true,
+    price: 41000,
+    originalPrice: 48000,
+    stock: 4,
+    rating: 5.0,
+    reviewCount: 19,
+    images: [
+      "https://images.unsplash.com/photo-1628619932492-a4c885c979f9?q=80&w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1656944227421-416b1d2186c9?q=80&w=1200&auto=format&fit=crop"
+    ],
+    colors: [
+      { name: "Chicago Red / Summit White", hex: "#9E2A2B" },
+      { name: "Onyx / Obsidian", hex: "#141416" }
+    ],
+    sizes: ["UK 7", "UK 8", "UK 9", "UK 10", "UK 11"],
+    description: "Deadstock collector's silhouette combining full-grain tumbled leather panels, high-collar ankle support, perforated toe box, and encapsulated Air-Sole cushioning. Independently authenticated prior to dispatch from the KRMU Vault.",
+    details: [
+      "Full-grain calfskin leather upper & woven tongue label",
+      "Encapsulated Air heel cushioning unit",
+      "Rubber cupsole with heritage concentric pivot tread",
+      "Serialized KRMU Vault authentication card included"
+    ],
+    care: "Wipe leather gently with a soft microfiber cloth. Store with cedar shoe trees.",
+    fit: "Standard UK sneaker sizing. True to size.",
+    reviews: []
+  },
+
   // ===================== WOMEN'S COLLECTION =====================
   {
     id: "krmu-w-01",

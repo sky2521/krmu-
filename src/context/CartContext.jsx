@@ -231,7 +231,8 @@ export const CartProvider = ({ children }) => {
   const discountAmount = calculatePromoDiscount(promoCode, subtotal);
 
   const FREE_SHIPPING_THRESHOLD = 2499;
-  const shippingFee = subtotal === 0 ? 0 : subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : 199;
+  const isComplimentaryTrialOrder = items.length > 0 && items.every((item) => Number(item.price) <= 10);
+  const shippingFee = subtotal === 0 ? 0 : subtotal >= FREE_SHIPPING_THRESHOLD || isComplimentaryTrialOrder ? 0 : 199;
   const total = Math.max(0, subtotal - discountAmount + shippingFee);
   const freeShippingProgress = Math.min(100, Math.round((subtotal / FREE_SHIPPING_THRESHOLD) * 100));
   const amountNeededForFreeShipping = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);

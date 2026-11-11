@@ -27,13 +27,14 @@ export default function ShopPage() {
 
   // Available filters dynamically extracted
   const allSizes = ['XS', 'S', 'M', 'L', 'XL'];
-  const subcategories = ['all', 'outerwear', 'tops', 'trousers', 'dresses'];
+  const subcategories = ['all', 'outerwear', 'tops', 'trousers', 'dresses', 'accessories', 'footwear'];
 
   const filteredProducts = useMemo(() => {
     return products.filter((prod) => {
       // Category filter
       if (categoryParam === 'men' && prod.category !== 'men') return false;
       if (categoryParam === 'women' && prod.category !== 'women') return false;
+      if (categoryParam === 'accessories' && prod.category !== 'accessories') return false;
       if (categoryParam === 'new-arrivals' && !prod.isNewArrival) return false;
 
       // Subcategory filter
@@ -99,6 +100,7 @@ export default function ShopPage() {
     all: 'The Entire Atelier Collection',
     men: "Men's Tailoring & Essentials",
     women: "Women's Silhouettes & Couture",
+    accessories: 'Atelier Objects & Footwear',
     'new-arrivals': 'New Season Atelier Arrivals'
   };
 
@@ -153,6 +155,7 @@ export default function ShopPage() {
             { id: 'all', label: 'All Items' },
             { id: 'men', label: 'Men' },
             { id: 'women', label: 'Women' },
+            { id: 'accessories', label: 'Accessories' },
             { id: 'new-arrivals', label: 'New Arrivals' }
           ].map((cat) => (
             <button

@@ -166,7 +166,7 @@ export default function OrderPage() {
   const [giftNote, setGiftNote] = useState('');
 
   // Shipping & Payment state
-  const [shippingMethod, setShippingMethod] = useState('whiteglove');
+  const [shippingMethod, setShippingMethod] = useState('standard');
   const [paymentMethod, setPaymentMethod] = useState('razorpay');
   const [preferredRzpMethod, setPreferredRzpMethod] = useState('all'); // all, upi, card, netbanking
   const [saveAddressToVault, setSaveAddressToVault] = useState(true);
@@ -279,13 +279,24 @@ export default function OrderPage() {
     [activePromo, subtotal]
   );
 
+  const isComplimentaryTrialOrder = useMemo(
+    () => activeOrderItems.length > 0 && activeOrderItems.every((item) => Number(item.price) <= 10),
+    [activeOrderItems]
+  );
+
+  const standardShippingCost = useMemo(() => {
+    if (subtotal === 0) return 0;
+    if (subtotal >= 2499 || isComplimentaryTrialOrder) return 0;
+    return 199;
+  }, [subtotal, isComplimentaryTrialOrder]);
+
   const shippingCost = useMemo(() => {
     if (subtotal === 0) return 0;
     if (shippingMethod === 'whiteglove') {
       return subtotal >= 45000 ? 0 : 499;
     }
-    return subtotal >= 2499 ? 0 : 199;
-  }, [subtotal, shippingMethod]);
+    return standardShippingCost;
+  }, [subtotal, shippingMethod, standardShippingCost]);
 
   const finalOrderTotal = Math.max(0, subtotal - discountAmount + shippingCost);
   const royalProgress = Math.min(100, Math.round((subtotal / 45000) * 100));
@@ -1284,7 +1295,7 @@ export default function OrderPage() {
                       <Truck className="w-3.5 h-3.5 text-[#C5A059]" /> Standard Express
                     </span>
                     <span className="text-xs font-semibold text-emerald-600">
-                      {subtotal >= 2499 ? 'FREE' : '₹199'}
+                      {standardShippingCost === 0 ? 'FREE' : '₹199'}
                     </span>
                   </div>
                   <p className={`text-[11px] ${shippingMethod === 'standard' ? 'text-neutral-300' : 'text-[#7F7972]'}`}>
