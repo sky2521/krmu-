@@ -44,7 +44,7 @@ export const INITIAL_PRODUCTS = [
     badge: "Vault Collector",
     isNewArrival: true,
     isBestseller: true,
-    price: 41000,
+    price: 40000,
     originalPrice: 48000,
     stock: 4,
     rating: 5.0,

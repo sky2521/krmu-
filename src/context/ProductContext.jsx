@@ -10,7 +10,7 @@ import {
 
 const ProductContext = createContext();
 
-const CATALOG_VERSION = "krmu_catalog_v3";
+const CATALOG_VERSION = "krmu_catalog_v4";
 
 export const ProductProvider = ({ children }) => {
   const [products, setProducts] = useState(() => {
